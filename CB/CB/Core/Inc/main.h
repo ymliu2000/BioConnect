@@ -61,6 +61,8 @@ void Error_Handler(void);
 #define Ground_RED_LED_GPIO_Port GPIOA
 #define Ground_IR_LED_Pin GPIO_PIN_1
 #define Ground_IR_LED_GPIO_Port GPIOA
+#define Analog_Output_Pin GPIO_PIN_5
+#define Analog_Output_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 
