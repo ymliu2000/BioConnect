@@ -1,10 +1,10 @@
-00:29:27 **** Incremental Build of configuration Debug for project CB ****
+16:23:01 **** Incremental Build of configuration Debug for project CB ****
 make -j7 all 
 arm-none-eabi-size  CB.elf 
    text	   data	    bss	    dec	    hex	filename
-  26788	    104	   2280	  29172	   71f4	CB.elf
+  26104	     92	   2276	  28472	   6f38	CB.elf
 Finished building: default.size.stdout
  
 
-00:29:27 Build Finished. 0 errors, 0 warnings. (took 254ms)
+16:23:01 Build Finished. 0 errors, 0 warnings. (took 244ms)
 
