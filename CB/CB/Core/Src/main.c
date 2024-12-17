@@ -48,7 +48,11 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+volatile uint8_t isWorking = 0;    // 标记是否处于工作状态(采集发送)
+uint8_t workMode = 0;              // IR=0, RED=1
+uint8_t preMode = 0;               // 预处理模式(0=无,1=原值,2=raw-10,3=raw+raw/2)
+uint8_t advMode = 0;               // 暂时不做高级处理,但从命令中解析出来
+char rxBuffer[64];                 // 存放接收的命令
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,14 +62,30 @@ static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-uint16_t ReadADCValue(void);
-void SendDataToProcessingBoard(uint16_t adcVal, uint8_t modeFlag);
-void PrintDebugADC(uint16_t adcVal, const char* ledName);
+void ProcessUartCommand(char* cmd);
+uint16_t ReadADC(void);
+uint16_t PreprocessData(uint16_t raw, uint8_t mode);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/**
+  * @brief USART1 RxCpltCallback
+  * 当处理板发送命令时触发此回调
+  */
+/** USART1 Rx中断回调：处理板命令到来时触发 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if(huart->Instance == USART1)
+  {
+    rxBuffer[63] = '\0';
+    ProcessUartCommand(rxBuffer);
+
+    memset(rxBuffer,0,sizeof(rxBuffer));
+    HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -101,59 +121,133 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  // 一个简短提示，向调试串口输出
-  char *initMsg = "Collector Board: IR/Red LED + ADC + USART1 ready.\r\n";
-  HAL_UART_Transmit(&huart2, (uint8_t*)initMsg, strlen(initMsg), HAL_MAX_DELAY);
-
-  // 初始化时，可以默认先关闭IR/Red
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // PA0 = IR LED off
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // PA1 = Red LED off
-
-  // 为ADC做一次校准（可选，具体看芯片）
+  // 校准ADC（可选）
   HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
-  // **在这里声明adcValue为uint16_t类型**
-  uint16_t adcValue = 0;
+  // 启动USART1中断接收
+  memset(rxBuffer,0,sizeof(rxBuffer));
+  HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
+
+  // 启动提示
+  char initMsg[] = "Collector Board: Standby.\r\n";
+  HAL_UART_Transmit(&huart2,(uint8_t*)initMsg, strlen(initMsg), HAL_MAX_DELAY);
+
+  // 默认关LED (PA0=IR, PA1=RED)
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	    if(isWorking)
+	    {
+	      // 周期性采集
+	      uint16_t raw  = ReadADC();
+	      uint16_t proc = PreprocessData(raw, preMode);
+
+	      char txBuf[64];
+	      sprintf(txBuf,"DATA,%u,%u\r\n", raw, proc);
+	      HAL_UART_Transmit(&huart1,(uint8_t*)txBuf, strlen(txBuf), HAL_MAX_DELAY);
+
+	      char dbg[64];
+	      sprintf(dbg,"Send Data: raw=%u, pre=%u\r\n",raw,proc);
+	      HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+
+	      HAL_Delay(100);
+	    }
+	    else
+	    {
+	      HAL_Delay(100);
+	    }
     /* USER CODE END WHILE */
-	  //=== 1) 打开 IR LED, 关闭 Red LED ===
-	    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // IR LED ON
-	    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // Red LED OFF
-	    HAL_Delay(10);  // 给LED一点稳定时间
 
-	    //=== 2) 采样ADC (PA6) ===
-	    adcValue = ReadADCValue();
-	    //=== 3) 发送采样值到处理板 (USART1) ===
-	    SendDataToProcessingBoard(adcValue, 1);  // 这里"1"表示IR LED模式
-	    //=== 4) 在调试串口(USART2)打印 (可选) ===
-	    PrintDebugADC(adcValue, "IR");
-
-	    HAL_Delay(500); // 模拟采样间隔
-
-	    //=== 5) 打开 Red LED, 关闭 IR LED ===
-	    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-	    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-	    HAL_Delay(10);
-
-	    //=== 6) 采样ADC (PA6) ===
-	    adcValue = ReadADCValue();
-	    //=== 7) 发送采样值到处理板 (USART1) ===
-	    SendDataToProcessingBoard(adcValue, 2);  // "2"表示Red LED模式
-	    //=== 8) 在调试串口(USART2)打印 (可选) ===
-	    PrintDebugADC(adcValue, "RED");
-
-	    HAL_Delay(500);
-
-	    // 这两步演示了分别点亮IR/RED并读值的流程，实际上你的项目中可能只选一种LED或根据状态机切换
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
+/* 命令解析：CMD:START,<IR/RED>,<preMode>,<advMode> / CMD:STOP */
+void ProcessUartCommand(char* cmd)
+{
+  if(strncmp(cmd,"CMD:START",9)==0)
+  {
+    char wStr[8]={0};
+    int p=0,a=0;
+    sscanf(cmd, "CMD:START,%[^,],%d,%d", wStr,&p,&a);
+
+    // 设置GPIO
+    if(strcmp(wStr,"IR")==0){
+      workMode=0;
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+    } else {
+      workMode=1;
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+    }
+
+    preMode=(uint8_t)p; // 0~3
+    advMode=(uint8_t)a; // 暂时不使用
+    isWorking=1;
+
+    // 返回ACK:START到处理板
+    char ack[] = "ACK:START\r\n";
+    HAL_UART_Transmit(&huart1,(uint8_t*)ack,strlen(ack),HAL_MAX_DELAY);
+
+    // **在采集板串口(USART2)打印**
+    char dbg[128];
+    sprintf(dbg,"now running: workMode=%s, preMode=%d, advMode=%d\r\n",
+            (workMode==0?"IR":"RED"), preMode, advMode);
+    HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+  }
+  else if(strncmp(cmd,"CMD:STOP",7)==0)
+  {
+    isWorking=0;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+
+    char ack[]="ACK:STOP\r\n";
+    HAL_UART_Transmit(&huart1,(uint8_t*)ack,strlen(ack),HAL_MAX_DELAY);
+
+    HAL_UART_Transmit(&huart2,(uint8_t*)"now stop\r\n",10,HAL_MAX_DELAY);
+  }
+  else
+  {
+    char err[]="ERROR:Unknown CMD\r\n";
+    HAL_UART_Transmit(&huart1,(uint8_t*)err,strlen(err),HAL_MAX_DELAY);
+
+    HAL_UART_Transmit(&huart2,(uint8_t*)"Unknown CMD.\r\n",14,HAL_MAX_DELAY);
+  }
+}
+
+/** 读取ADC */
+uint16_t ReadADC(void)
+{
+  uint16_t val=0;
+  HAL_ADC_Start(&hadc1);
+  if(HAL_ADC_PollForConversion(&hadc1,10)==HAL_OK)
+  {
+    val=HAL_ADC_GetValue(&hadc1);
+  }
+  HAL_ADC_Stop(&hadc1);
+  return val;
+}
+
+/** 预处理函数：0=无处理,1=原值,2=raw-10,3=raw+raw/2 */
+uint16_t PreprocessData(uint16_t raw, uint8_t mode)
+{
+  switch(mode){
+    case 0: return raw;
+    case 1: return raw;
+    case 2: return (raw>10)?(raw-10):0;
+    case 3: return raw + raw/2;
+    default: return raw;
+  }
+}
+
 
 /**
   * @brief System Clock Configuration
@@ -366,38 +460,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// 轮询读取ADC单次转换
-uint16_t ReadADCValue(void)
-{
-    uint16_t val = 0;
-    HAL_ADC_Start(&hadc1); // 启动ADC转换
-    if(HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
-    {
-        val = HAL_ADC_GetValue(&hadc1); // 获取转换结果(0~4095)
-    }
-    HAL_ADC_Stop(&hadc1);
-    return val;
-}
-
-// 通过 USART1 把采样数据发送给处理板
-// modeFlag 可以用来区分当前是IR还是RED, 或者数据帧结构中可包含更多信息
-void SendDataToProcessingBoard(uint16_t adcVal, uint8_t modeFlag)
-{
-    // 构造一个简单协议，类似 "M1,1234\r\n"
-    // M: modeFlag, 数字: ADC值
-    char txBuf[32];
-    sprintf(txBuf, "M%d,%u\r\n", modeFlag, adcVal);
-    HAL_UART_Transmit(&huart1, (uint8_t*)txBuf, strlen(txBuf), HAL_MAX_DELAY);
-}
-
-// 在USART2上打印调试信息
-void PrintDebugADC(uint16_t adcVal, const char* ledName)
-{
-    char dbg[64];
-    sprintf(dbg, "[%s] ADC = %u\r\n", ledName, adcVal);
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), HAL_MAX_DELAY);
-}
-
 /* USER CODE END 4 */
 
 /**

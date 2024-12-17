@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <string.h>
+#include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -42,10 +43,41 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
-
+char rxBuffer[64];         // 接收采集板消息
 /* USER CODE BEGIN PV */
-// 如果需要打印调试信息，可以使用 huart2 (ST-LINK虚拟串口)
-char *initMsg = "Test start: B1(Button) & LD2(LED)\r\n";
+// 三级状态机
+typedef enum {
+  STATE_IDLE = 0,
+  STATE_SELECT,
+  STATE_RUNNING,
+  STATE_ERROR
+} Level1State_t;
+
+typedef enum {
+  SUB_WORKMODE_SELECT=0,
+  SUB_PREPROC_SELECT,
+  SUB_ADVPROC_SELECT
+} SelectSubState_t;
+
+// 全局状态机变量
+Level1State_t level1State = STATE_IDLE;
+SelectSubState_t selectSubState = SUB_WORKMODE_SELECT;
+
+// 子模式
+uint8_t workMode    = 0;  // IR=0, RED=1
+uint8_t preprocMode = 1;  // 1,2,3
+uint8_t advMode     = 0;  // 0=心率+心律失常,1=血氧
+uint8_t isRunning   = 0;  // 标记是否RUNNING
+
+// LED 闪烁
+uint32_t lastBlinkTick = 0;
+uint8_t blinkPhase = 0;
+
+// 按钮相关
+uint8_t  btnPressed    = 0;
+uint32_t btnPressTick  = 0;
+uint8_t  btnShortPress = 0; // 检测到一次短按
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -54,11 +86,60 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
+void RunStateMachine(void);
+void CheckButton(void);
+void UpdateLedBlink(void);
 
+void SendStartCmd(void);  // 发送 CMD:START,<workMode>,<preprocMode>,<advMode>
+void SendStopCmd(void);
+
+void ProcessCollectorData(char* line);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+ * @brief  USART1 Rx回调函数 (采集板发送DATA或ACK时触发)
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if(huart->Instance == USART1)
+  {
+    rxBuffer[63] = '\0';
+    char line[64];
+    strcpy(line, rxBuffer);
+
+    // 调试打印：收到采集板一行数据
+    char debugLine[128];
+    sprintf(debugLine,"[PB] RxCplt: %s\n", line);
+    HAL_UART_Transmit(&huart2,(uint8_t*)debugLine, strlen(debugLine), HAL_MAX_DELAY);
+
+    if(strncmp(line, "DATA,",5)==0)
+    {
+      ProcessCollectorData(line); // "DATA, raw, preprocessed"
+    }
+    else if(strncmp(line,"ACK:START",9)==0)
+    {
+      char dbg[]="Collector ACK:START\r\n";
+      HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+    }
+    else if(strncmp(line,"ACK:STOP",8)==0)
+    {
+      char dbg[]="Collector ACK:STOP\r\n";
+      HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+    }
+    else if(strncmp(line,"ERROR:",6)==0)
+    {
+      char dbg[]="Collector ERROR\r\n";
+      HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+      level1State = STATE_ERROR;
+    }
+
+    // 继续启动中断接收
+    memset(rxBuffer,0,sizeof(rxBuffer));
+    HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -94,38 +175,268 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Transmit(&huart2, (uint8_t*)initMsg, strlen(initMsg), HAL_MAX_DELAY);
+   memset(rxBuffer,0,sizeof(rxBuffer));
+   HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
 
-  // 简单测试代码：若PC13(B1按钮)按下(通常读到GPIO_PIN_RESET)，则点亮LED(PA5)；否则熄灭LED
-
-
+   char *initMsg = "Processing Board (3-level SM). Start in IDLE.\r\n";
+   HAL_UART_Transmit(&huart2,(uint8_t*)initMsg,strlen(initMsg),HAL_MAX_DELAY);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
 	  /* USER CODE BEGIN WHILE */
-	     // 读取PC13状态（用户按钮 B1）
-	     if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
-	     {
-	       // 按钮按下时，点亮LD2 (PA5输出高电平)
-	       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-	     }
-	     else
-	     {
-	       // 按钮松开时，熄灭LD2 (PA5输出低电平)
-	       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-	     }
-	     /* USER CODE END WHILE */
+	    CheckButton();      // 检测按钮短按
+	    RunStateMachine();  // 运行状态机逻辑
+	    UpdateLedBlink();   // 根据当前状态控制LED闪烁节奏
 
-	     /* USER CODE BEGIN 3 */
-	     // 适当延时，避免过快刷新
-	     HAL_Delay(50);
+	    HAL_Delay(20);
+    /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
+}
+
+//===================== 状态机核心逻辑 =====================//
+void RunStateMachine(void)
+{
+  switch(level1State)
+  {
+    case STATE_IDLE:
+      if(btnShortPress)
+      {
+        level1State = STATE_SELECT;
+        selectSubState = SUB_WORKMODE_SELECT;
+
+        char dbg[64];
+        sprintf(dbg, "Enter STATE_SELECT, Sub=WORKMODE_SELECT (workMode=%s)\r\n", (workMode==0?"IR":"RED"));
+        HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+
+        btnShortPress=0;
+      }
+      break;
+
+    case STATE_SELECT:
+      switch(selectSubState)
+      {
+        case SUB_WORKMODE_SELECT:
+          if(btnShortPress)
+          {
+            workMode = !workMode;
+            btnShortPress=0;
+
+            char dbg[64];
+            sprintf(dbg,"Now WorkMode=%s\r\n", (workMode==0?"IR":"RED"));
+            HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+          }
+          break;
+
+        case SUB_PREPROC_SELECT:
+          if(btnShortPress)
+          {
+            preprocMode++;
+            if(preprocMode>3) preprocMode=1;
+            btnShortPress=0;
+
+            char dbg[64];
+            sprintf(dbg,"Now PreprocMode=%d\r\n", preprocMode);
+            HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+          }
+          break;
+
+        case SUB_ADVPROC_SELECT:
+          if(btnShortPress)
+          {
+            advMode = !advMode;
+            btnShortPress=0;
+
+            char dbg[64];
+            sprintf(dbg,"Now AdvMode=%s\r\n", (advMode==0?"心率/心律失常":"血氧"));
+            HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+          }
+          break;
+      }
+      break;
+
+    case STATE_RUNNING:
+      if(btnShortPress)
+      {
+        SendStopCmd();
+        isRunning=0;
+        level1State=STATE_IDLE;
+
+        char dbg[]="Now STOP => Go back to IDLE\r\n";
+        HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+
+        btnShortPress=0;
+      }
+      break;
+
+    case STATE_ERROR:
+      if(btnShortPress)
+      {
+        level1State=STATE_IDLE;
+        char dbg[]="Error cleared, back to IDLE\r\n";
+        HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+        btnShortPress=0;
+      }
+      break;
+  }
+}
+
+void CheckButton(void)
+{
+  static uint8_t prevPin=1;
+  uint8_t pinVal = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13); // 1=未按,0=按下
+
+  if(pinVal!=prevPin)
+  {
+    if(pinVal==0)
+    {
+      btnPressed=1;
+      btnPressTick=HAL_GetTick();
+    }
+    else
+    {
+      if(btnPressed)
+      {
+        uint32_t pressDuration=HAL_GetTick()-btnPressTick;
+        if(pressDuration<800) // 短按
+        {
+          btnShortPress=1;
+        }
+        else
+        {
+          // 长按 => 切换子状态或进入RUNNING
+          if(level1State==STATE_SELECT)
+          {
+            switch(selectSubState)
+            {
+              case SUB_WORKMODE_SELECT:
+                selectSubState=SUB_PREPROC_SELECT;
+                HAL_UART_Transmit(&huart2,(uint8_t*)"Enter STATE_SELECT, Sub=PREPROC_SELECT\r\n",39,HAL_MAX_DELAY);
+                break;
+              case SUB_PREPROC_SELECT:
+                selectSubState=SUB_ADVPROC_SELECT;
+                HAL_UART_Transmit(&huart2,(uint8_t*)"Enter STATE_SELECT, Sub=ADVPROC_SELECT\r\n",38,HAL_MAX_DELAY);
+                break;
+              case SUB_ADVPROC_SELECT:
+                SendStartCmd();
+                isRunning=1;
+                level1State=STATE_RUNNING;
+                break;
+            }
+          }
+        }
+        btnPressed=0;
+      }
+    }
+    prevPin=pinVal;
+  }
+}
+
+void UpdateLedBlink(void)
+{
+  static uint8_t ledOn=0;
+  uint32_t now=HAL_GetTick();
+
+  if(level1State==STATE_IDLE)
+  {
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+  }
+  else if(level1State==STATE_SELECT)
+  {
+    if(selectSubState==SUB_WORKMODE_SELECT)
+    {
+      // 单闪
+      if(now-lastBlinkTick>1000)
+      {
+        lastBlinkTick=now;
+        ledOn=!ledOn;
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, ledOn?GPIO_PIN_SET:GPIO_PIN_RESET);
+      }
+    }
+    else if(selectSubState==SUB_PREPROC_SELECT)
+    {
+      // 双闪
+      if(now-lastBlinkTick>200)
+      {
+        lastBlinkTick=now;
+        blinkPhase++;
+        if(blinkPhase>=5) blinkPhase=0;
+        if(blinkPhase==0||blinkPhase==2)
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+        else
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+      }
+    }
+    else if(selectSubState==SUB_ADVPROC_SELECT)
+    {
+      // 三闪
+      if(now-lastBlinkTick>150)
+      {
+        lastBlinkTick=now;
+        blinkPhase++;
+        if(blinkPhase>=6) blinkPhase=0;
+        if(blinkPhase==0||blinkPhase==2||blinkPhase==4)
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+        else
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+      }
+    }
+  }
+  else if(level1State==STATE_RUNNING)
+  {
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+  }
+  else if(level1State==STATE_ERROR)
+  {
+    if(now-lastBlinkTick>300)
+    {
+      lastBlinkTick=now;
+      ledOn=!ledOn;
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, ledOn?GPIO_PIN_SET:GPIO_PIN_RESET);
+    }
+  }
+}
+
+/** 发送 START 命令给采集板 */
+void SendStartCmd(void)
+{
+  char wStr[8];
+  if(workMode==0) strcpy(wStr,"IR"); else strcpy(wStr,"RED");
+
+  char cmdBuf[64];
+  sprintf(cmdBuf, "CMD:START,%s,%d,%d\r\n", wStr, preprocMode, advMode);
+  HAL_UART_Transmit(&huart1,(uint8_t*)cmdBuf,strlen(cmdBuf),HAL_MAX_DELAY);
+
+  char dbg[80];
+  sprintf(dbg,"Send START: %s", cmdBuf);
+  HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+}
+
+/** 发送 STOP 命令给采集板 */
+void SendStopCmd(void)
+{
+  char stopCmd[]="CMD:STOP\r\n";
+  HAL_UART_Transmit(&huart1,(uint8_t*)stopCmd,strlen(stopCmd),HAL_MAX_DELAY);
+
+  HAL_UART_Transmit(&huart2,(uint8_t*)"Send CMD:STOP\r\n",15,HAL_MAX_DELAY);
+}
+
+void ProcessCollectorData(char* line)
+{
+  uint16_t rawVal, preVal;
+  sscanf(line,"DATA,%hu,%hu",&rawVal,&preVal);
+
+  char dbg[64];
+  if(advMode==0)
+    sprintf(dbg,"Recv DATA: raw=%u, pre=%u, [Adv=心率]\r\n", rawVal, preVal);
+  else
+    sprintf(dbg,"Recv DATA: raw=%u, pre=%u, [Adv=血氧]\r\n", rawVal, preVal);
+
+  HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
 }
 
 /**
@@ -293,8 +604,8 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
-/* USER CODE BEGIN 4 */
 
+/* USER CODE BEGIN 4 */
 /* USER CODE END 4 */
 
 /**
