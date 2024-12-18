@@ -18,8 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -38,7 +36,8 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define RX_BUFFER_SIZE 128
+#define TX_BUFFER_SIZE 128
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -46,13 +45,31 @@ ADC_HandleTypeDef hadc1;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-volatile uint8_t isWorking = 0;    // 标记是否处于工作状态(采集发送)
-uint8_t workMode = 0;              // IR=0, RED=1
-uint8_t preMode = 0;               // 预处理模式(0=无,1=原值,2=raw-10,3=raw+raw/2)
-uint8_t advMode = 0;               // 暂时不做高级处理,但从命令中解析出来
-char rxBuffer[64];                 // 存放接收的命令
+/* Global states and modes */
+volatile uint8_t isWorking = 0;
+uint8_t workMode = 0;    // IR=0, RED=1
+uint8_t preMode  = 1;    // 1=no process,2=sliding avg,3=low pass
+uint8_t advMode  = 0;    // advanced mode (0 or 1)
+
+/* UART receive and send buffers */
+static char rxBuffer[RX_BUFFER_SIZE];
+static volatile uint8_t rxReady = 0;
+
+static char txBufferUart1[TX_BUFFER_SIZE];
+static char txBufferUart2[TX_BUFFER_SIZE];
+static volatile uint8_t uart1TxBusy = 0;
+static volatile uint8_t uart2TxBusy = 0;
+
+/* Preprocessing: For sliding average / low pass */
+#define WINDOW_SIZE 5
+static float avgBuffer[WINDOW_SIZE] = {0.0f};
+static int avgIndex = 0;
+static float avgSum = 0.0f;
+static float prevOutput = 0.0f; // for low pass filter
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,31 +78,63 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
-void ProcessUartCommand(char* cmd);
+
+void ProcessUartCommand(const char* cmd);
 uint16_t ReadADC(void);
 uint16_t PreprocessData(uint16_t raw, uint8_t mode);
+
+static void UART_Send_IT(UART_HandleTypeDef *huart, const char *str);
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
+
+/* Filters */
+float moving_average_filter(float new_sample) {
+    avgSum -= avgBuffer[avgIndex];
+    avgBuffer[avgIndex] = new_sample;
+    avgSum += new_sample;
+    avgIndex = (avgIndex + 1) % WINDOW_SIZE;
+    return avgSum / WINDOW_SIZE;
+}
+
+#define ALPHA 0.1f
+float low_pass_filter(float input) {
+    float output = ALPHA * input + (1.0f - ALPHA)*prevOutput;
+    prevOutput = output;
+    return output;
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
 /**
-  * @brief USART1 RxCpltCallback
-  * 当处理板发送命令时触发此回调
-  */
-/** USART1 Rx中断回调：处理板命令到来时触发 */
+ * @brief USART1 Rx complete callback
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if(huart->Instance == USART1)
   {
-    rxBuffer[63] = '\0';
-    ProcessUartCommand(rxBuffer);
-
-    memset(rxBuffer,0,sizeof(rxBuffer));
-    HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
+    rxBuffer[RX_BUFFER_SIZE-1] = '\0';
+    rxReady = 1;
+    // Re-arm receive
+    HAL_UART_Receive_IT(&huart1, (uint8_t*)rxBuffer, RX_BUFFER_SIZE-1);
   }
 }
+
+/**
+ * @brief UART Tx complete callback
+ */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if(huart->Instance == USART1) {
+    uart1TxBusy = 0;
+  } else if(huart->Instance == USART2) {
+    uart2TxBusy = 0;
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -120,21 +169,25 @@ int main(void)
   MX_ADC1_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  // 校准ADC（可选）
-  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
-  // 启动USART1中断接收
+  // Adjust interrupt priority so USART1 is high priority
+  HAL_NVIC_SetPriority(USART1_IRQn, 1, 0);
+  HAL_NVIC_SetPriority(USART2_IRQn, 2, 0);
+
+  // Start receiving commands from processing board
   memset(rxBuffer,0,sizeof(rxBuffer));
-  HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,sizeof(rxBuffer)-1);
+  HAL_UART_Receive_IT(&huart1,(uint8_t*)rxBuffer,RX_BUFFER_SIZE-1);
 
-  // 启动提示
-  char initMsg[] = "Collector Board: Standby.\r\n";
-  HAL_UART_Transmit(&huart2,(uint8_t*)initMsg, strlen(initMsg), HAL_MAX_DELAY);
+  UART_Send_IT(&huart2,"Collector Board: Standby.\r\n");
 
-  // 默认关LED (PA0=IR, PA1=RED)
+  // Turn off IR/RED initially
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+
+  // Calibration ADC if needed
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
   /* USER CODE END 2 */
 
@@ -144,23 +197,40 @@ int main(void)
   {
 	    if(isWorking)
 	    {
-	      // 周期性采集
-	      uint16_t raw  = ReadADC();
+	      // Periodically read ADC and send DATA
+	      uint16_t raw = ReadADC();
 	      uint16_t proc = PreprocessData(raw, preMode);
 
-	      char txBuf[64];
-	      sprintf(txBuf,"DATA,%u,%u\r\n", raw, proc);
-	      HAL_UART_Transmit(&huart1,(uint8_t*)txBuf, strlen(txBuf), HAL_MAX_DELAY);
+	      // Convert to ASCII and send DATA
+	      // If no processing mode, we have converted to float inside PreprocessData.
+	      snprintf(txBufferUart1, TX_BUFFER_SIZE, "DATA,%u,%u\r\n", raw, proc);
+	      UART_Send_IT(&huart1, txBufferUart1);
 
 	      char dbg[64];
-	      sprintf(dbg,"Send Data: raw=%u, pre=%u\r\n",raw,proc);
-	      HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
+	      snprintf(dbg,sizeof(dbg),"Send Data: raw=%u, pre=%u\r\n",raw,proc);
+	      UART_Send_IT(&huart2,dbg);
 
 	      HAL_Delay(100);
 	    }
 	    else
 	    {
+	      // Standby
 	      HAL_Delay(100);
+	    }
+
+	    // Check if we got a new command line
+	    if(rxReady) {
+	      rxReady = 0;
+	      char lineCopy[RX_BUFFER_SIZE];
+	      strncpy(lineCopy, rxBuffer, RX_BUFFER_SIZE-1);
+	      lineCopy[RX_BUFFER_SIZE-1] = '\0';
+
+	      // Debug
+	      char dbg[128];
+	      snprintf(dbg,sizeof(dbg), "Recv CMD: %s\r\n", lineCopy);
+	      UART_Send_IT(&huart2, dbg);
+
+	      ProcessUartCommand(lineCopy);
 	    }
     /* USER CODE END WHILE */
 
@@ -168,86 +238,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
-/* 命令解析：CMD:START,<IR/RED>,<preMode>,<advMode> / CMD:STOP */
-void ProcessUartCommand(char* cmd)
-{
-  if(strncmp(cmd,"CMD:START",9)==0)
-  {
-    char wStr[8]={0};
-    int p=0,a=0;
-    sscanf(cmd, "CMD:START,%[^,],%d,%d", wStr,&p,&a);
-
-    // 设置GPIO
-    if(strcmp(wStr,"IR")==0){
-      workMode=0;
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
-    } else {
-      workMode=1;
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-    }
-
-    preMode=(uint8_t)p; // 0~3
-    advMode=(uint8_t)a; // 暂时不使用
-    isWorking=1;
-
-    // 返回ACK:START到处理板
-    char ack[] = "ACK:START\r\n";
-    HAL_UART_Transmit(&huart1,(uint8_t*)ack,strlen(ack),HAL_MAX_DELAY);
-
-    // **在采集板串口(USART2)打印**
-    char dbg[128];
-    sprintf(dbg,"now running: workMode=%s, preMode=%d, advMode=%d\r\n",
-            (workMode==0?"IR":"RED"), preMode, advMode);
-    HAL_UART_Transmit(&huart2,(uint8_t*)dbg,strlen(dbg),HAL_MAX_DELAY);
-  }
-  else if(strncmp(cmd,"CMD:STOP",7)==0)
-  {
-    isWorking=0;
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
-
-    char ack[]="ACK:STOP\r\n";
-    HAL_UART_Transmit(&huart1,(uint8_t*)ack,strlen(ack),HAL_MAX_DELAY);
-
-    HAL_UART_Transmit(&huart2,(uint8_t*)"now stop\r\n",10,HAL_MAX_DELAY);
-  }
-  else
-  {
-    char err[]="ERROR:Unknown CMD\r\n";
-    HAL_UART_Transmit(&huart1,(uint8_t*)err,strlen(err),HAL_MAX_DELAY);
-
-    HAL_UART_Transmit(&huart2,(uint8_t*)"Unknown CMD.\r\n",14,HAL_MAX_DELAY);
-  }
-}
-
-/** 读取ADC */
-uint16_t ReadADC(void)
-{
-  uint16_t val=0;
-  HAL_ADC_Start(&hadc1);
-  if(HAL_ADC_PollForConversion(&hadc1,10)==HAL_OK)
-  {
-    val=HAL_ADC_GetValue(&hadc1);
-  }
-  HAL_ADC_Stop(&hadc1);
-  return val;
-}
-
-/** 预处理函数：0=无处理,1=原值,2=raw-10,3=raw+raw/2 */
-uint16_t PreprocessData(uint16_t raw, uint8_t mode)
-{
-  switch(mode){
-    case 0: return raw;
-    case 1: return raw;
-    case 2: return (raw>10)?(raw-10):0;
-    case 3: return raw + raw/2;
-    default: return raw;
-  }
-}
-
 
 /**
   * @brief System Clock Configuration
@@ -431,6 +421,41 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -444,6 +469,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, Ground_RED_LED_Pin|Ground_IR_LED_Pin, GPIO_PIN_RESET);

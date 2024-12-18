@@ -1,10 +1,10 @@
-13:52:16 **** Incremental Build of configuration Debug for project PB ****
+18:42:25 **** Incremental Build of configuration Debug for project PB ****
 make -j7 all 
 arm-none-eabi-size  PB.elf 
    text	   data	    bss	    dec	    hex	filename
-  24860	     96	   2264	  27220	   6a54	PB.elf
+  26196	     96	   2456	  28748	   704c	PB.elf
 Finished building: default.size.stdout
  
 
-13:52:16 Build Finished. 0 errors, 0 warnings. (took 218ms)
+18:42:26 Build Finished. 0 errors, 0 warnings. (took 253ms)
 

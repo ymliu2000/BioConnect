@@ -1,21 +1,38 @@
-13:51:31 **** Incremental Build of configuration Debug for project PB ****
+18:42:15 **** Build of configuration Debug for project PB ****
 make -j7 all 
 arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32L476xx -c -I../Core/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32L4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+../Core/Src/main.c:54:13: warning: 'txBufferUart2' defined but not used [-Wunused-variable]
+   54 | static char txBufferUart2[TX_BUFFER_SIZE];
+      |             ^~~~~~~~~~~~~
+../Core/Src/main.c: In function 'SendStartCmd':
+../Core/Src/main.c:446:41: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size 68 [-Wformat-truncation=]
+  446 |   snprintf(dbg,sizeof(dbg),"Send START: %s", txBufferUart1);
+      |                                         ^~   ~~~~~~~~~~~~~
+../Core/Src/main.c:446:3: note: 'snprintf' output between 13 and 140 bytes into a destination of size 80
+  446 |   snprintf(dbg,sizeof(dbg),"Send START: %s", txBufferUart1);
+      |   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+../Core/Src/main.c: In function 'main':
+../Core/Src/main.c:228:68: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size 115 [-Wformat-truncation=]
+  228 |               snprintf(debugLine, sizeof(debugLine), "[PB] RxCplt: %s\n", lineCopy);
+      |                                                                    ^~     ~~~~~~~~
+../Core/Src/main.c:228:15: note: 'snprintf' output between 15 and 142 bytes into a destination of size 128
+  228 |               snprintf(debugLine, sizeof(debugLine), "[PB] RxCplt: %s\n", lineCopy);
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 arm-none-eabi-gcc -o "PB.elf" @"objects.list"   -mcpu=cortex-m4 -T"/Users/ebrietas/Desktop/BioConnect/PB/PB/STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="PB.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 Finished building target: PB.elf
  
 arm-none-eabi-size  PB.elf 
 arm-none-eabi-objdump -h -S PB.elf  > "PB.list"
    text	   data	    bss	    dec	    hex	filename
-  24860	     96	   2264	  27220	   6a54	PB.elf
+  26196	     96	   2456	  28748	   704c	PB.elf
 Finished building: default.size.stdout
  
 Finished building: PB.list
  
-13:52:16 **** Incremental Build of configuration Debug for project PB ****
+18:42:25 **** Incremental Build of configuration Debug for project PB ****
 make -j7 all 
 arm-none-eabi-size  PB.elf 
    text	   data	    bss	    dec	    hex	filename
-  24860	     96	   2264	  27220	   6a54	PB.elf
+  26196	     96	   2456	  28748	   704c	PB.elf
 Finished building: default.size.stdout
  

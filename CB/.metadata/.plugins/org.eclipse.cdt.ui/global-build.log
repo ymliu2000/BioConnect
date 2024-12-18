@@ -1,21 +1,31 @@
-13:42:43 **** Incremental Build of configuration Debug for project CB ****
+18:47:36 **** Build of configuration Debug for project CB ****
 make -j7 all 
 arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32L476xx -c -I../Core/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32L4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+../Core/Src/main.c:63:13: warning: 'txBufferUart2' defined but not used [-Wunused-variable]
+   63 | static char txBufferUart2[TX_BUFFER_SIZE];
+      |             ^~~~~~~~~~~~~
+../Core/Src/main.c: In function 'main':
+../Core/Src/main.c:229:52: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size 118 [-Wformat-truncation=]
+  229 |               snprintf(dbg,sizeof(dbg), "Recv CMD: %s\r\n", lineCopy);
+      |                                                    ^~       ~~~~~~~~
+../Core/Src/main.c:229:15: note: 'snprintf' output between 13 and 140 bytes into a destination of size 128
+  229 |               snprintf(dbg,sizeof(dbg), "Recv CMD: %s\r\n", lineCopy);
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 arm-none-eabi-gcc -o "CB.elf" @"objects.list"   -mcpu=cortex-m4 -T"/Users/ebrietas/Desktop/BioConnect/CB/CB/STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="CB.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 Finished building target: CB.elf
  
 arm-none-eabi-size  CB.elf 
 arm-none-eabi-objdump -h -S CB.elf  > "CB.list"
    text	   data	    bss	    dec	    hex	filename
-  31064	     92	   2340	  33496	   82d8	CB.elf
+  31816	     96	   2576	  34488	   86b8	CB.elf
 Finished building: default.size.stdout
  
 Finished building: CB.list
  
-13:42:49 **** Incremental Build of configuration Debug for project CB ****
+18:47:41 **** Incremental Build of configuration Debug for project CB ****
 make -j7 all 
 arm-none-eabi-size  CB.elf 
    text	   data	    bss	    dec	    hex	filename
-  31064	     92	   2340	  33496	   82d8	CB.elf
+  31816	     96	   2576	  34488	   86b8	CB.elf
 Finished building: default.size.stdout
  
