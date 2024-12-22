@@ -1,0 +1,160 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c (Processing Board)
+  * @brief          : Main program body for data processing
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+#include "main.h"
+#include <string.h>
+#include <stdio.h>
+
+/* Private variables ---------------------------------------------------------*/
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
+char rxBuffer1[64]; // USART1 接收缓冲区
+
+/* Function Prototypes */
+void SendStartCommand(void);
+void SendStopCommand(void);
+
+/* Main Function */
+int main(void) {
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
+
+  // 初始化 USART1 接收中断
+  HAL_UART_Receive_IT(&huart1, (uint8_t*)rxBuffer1, sizeof(rxBuffer1) - 1);
+
+  while (1) {
+    HAL_Delay(5000); // 工作 5 秒钟
+    SendStopCommand();
+    HAL_Delay(5000); // 停止 5 秒钟
+    SendStartCommand();
+  }
+}
+
+/* 发送启动命令 */
+void SendStartCommand(void) {
+  const char* startCmd = "START\r\n";
+  HAL_UART_Transmit(&huart3, (uint8_t*)startCmd, strlen(startCmd), HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart2, (uint8_t*)"Sent: START\r\n", 13, HAL_MAX_DELAY);
+}
+
+/* 发送停止命令 */
+void SendStopCommand(void) {
+  const char* stopCmd = "STOP\r\n";
+  HAL_UART_Transmit(&huart3, (uint8_t*)stopCmd, strlen(stopCmd), HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart2, (uint8_t*)"Sent: STOP\r\n", 12, HAL_MAX_DELAY);
+}
+
+/* USART1 中断回调函数 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART1) {
+    rxBuffer1[63] = '\0'; // 确保字符串结束
+    HAL_UART_Transmit(&huart2, (uint8_t*)rxBuffer1, strlen(rxBuffer1), HAL_MAX_DELAY);
+    memset(rxBuffer1, 0, sizeof(rxBuffer1));
+    HAL_UART_Receive_IT(&huart1, (uint8_t*)rxBuffer1, sizeof(rxBuffer1) - 1);
+  }
+}
+
+
+/**
+  * @brief  系统时钟配置
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  // CubeMX生成的代码
+}
+
+/**
+  * @brief  USART1初始化函数
+  * @param  None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+  // CubeMX生成的代码，确保波特率与采集板一致（如115200）
+}
+
+/**
+  * @brief  USART2初始化函数
+  * @param  None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+  // CubeMX生成的代码，确保波特率与采集板一致（如115200）
+}
+
+/**
+  * @brief  USART3初始化函数
+  * @param  None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+  // CubeMX生成的代码，确保波特率与采集板一致（如115200）
+}
+
+/**
+  * @brief  GPIO初始化函数
+  * @param  None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+
+  /* Configure PA5 as output (LED) */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* Initialize LED (PA5) to OFF */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+}
+
+/* 错误处理函数 */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  __disable_irq();
+  while (1)
+  {
+    // 可选：闪烁LED或其他错误指示
+    HAL_Delay(1000);
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  报告断言失败的文件名和行号
+  * @param  file: 源文件名
+  * @param  line: 发生断言的行号
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  // 可选：实现断言失败处理
+}
+#endif /* USE_FULL_ASSERT */
+
+
+
+
