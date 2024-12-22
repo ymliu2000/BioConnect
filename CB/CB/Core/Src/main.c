@@ -1,230 +1,233 @@
-/* Includes ------------------------------------------------------------------*/
+/* DMA-enhanced code for STM32L476RG: Collector Board and Processing Board */
+
+/* This code includes DMA initialization and changes for the described use case.
+It includes configuration of ADC and USARTs to use DMA with the stated priorities
+and data width adjustments. */
+
+/* -------------------- Collector Board -------------------- */
 #include "main.h"
 #include <string.h>
 #include <stdio.h>
 
-/* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart1; // 与处理板通信
-UART_HandleTypeDef huart2; // 调试串口
-UART_HandleTypeDef huart3; // 接收处理板命令
-ADC_HandleTypeDef hadc1;   // ADC模块
+/* Private variables */
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart3_rx;
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
-char rxBuffer1[64];        // USART1 接收处理板数据
-char rxBuffer3[64];        // USART3 接收处理板命令
-uint8_t isWorking = 0;     // 标记是否在工作
-char dbg[128];             // 调试信息
+volatile uint8_t rxBufferUart1[64];
+volatile uint8_t rxBufferUart3[64];
+volatile uint16_t adcData[100]; // ADC DMA buffer
+volatile uint8_t isSampling = 0;
 
-/* Function Prototypes -------------------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_ADC1_Init(void);
-void ProcessCommand(char *cmd); // 处理处理板通过 USART3 发送的命令
 
-/* Main Program --------------------------------------------------------------*/
-int main(void) {
+/* Function to handle UART commands */
+void ProcessCommandFromProcessingBoard(void);
+
+/* Main code */
+int main(void)
+{
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
+    MX_DMA_Init();
     MX_USART1_UART_Init();
-    MX_USART2_UART_Init();
     MX_USART3_UART_Init();
     MX_ADC1_Init();
 
-    // 初始化完成，打印信息
-    char initMsg[] = "Collector Board Initialized. Ready to Work.\r\n";
-    HAL_UART_Transmit(&huart2, (uint8_t *)initMsg, strlen(initMsg), HAL_MAX_DELAY);
+    // Start UART RX DMA
+    HAL_UART_Receive_DMA(&huart3, rxBufferUart3, sizeof(rxBufferUart3));
 
-    // 启动 USART3 接收中断
-    HAL_UART_Receive_IT(&huart3, (uint8_t *)rxBuffer3, sizeof(rxBuffer3) - 1);
+    // Start ADC DMA (does not sample until triggered)
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adcData, sizeof(adcData) / sizeof(adcData[0]));
 
-    while (1) {
-        if (isWorking) {
-            // 开始采集数据
-            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // 启动 RED LED
-            HAL_ADC_Start(&hadc1);
-            if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) == HAL_OK) {
-                uint16_t adc_value = HAL_ADC_GetValue(&hadc1);
-                char data_packet[64];
-                sprintf(data_packet, "DATA,%u\r\n", adc_value);
-                HAL_UART_Transmit(&huart1, (uint8_t *)data_packet, strlen(data_packet), HAL_MAX_DELAY);
+    // Initialization message
+    char msg[] = "Collector Board Ready.\r\n";
+    HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
 
-                // 在调试串口打印
-                sprintf(dbg, "Collected Data: ADC=%u\r\n", adc_value);
-                HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
+    while (1)
+    {
+        if (isSampling)
+        {
+            // Simulate sending sampled data to Processing Board
+            for (int i = 0; i < 100; i++)
+            {
+                char dataMsg[32];
+                sprintf(dataMsg, "DATA:%u\r\n", adcData[i]);
+                HAL_UART_Transmit(&huart1, (uint8_t *)dataMsg, strlen(dataMsg), HAL_MAX_DELAY);
+                HAL_Delay(10); // Simulated delay between samples
             }
-            HAL_ADC_Stop(&hadc1);
-            HAL_Delay(500);
         }
-    }
-}
 
-/* USART3 中断回调：接收处理板命令 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART3) {
-        rxBuffer3[63] = '\0';
-        ProcessCommand(rxBuffer3); // 处理命令
-        memset(rxBuffer3, 0, sizeof(rxBuffer3));
-        HAL_UART_Receive_IT(&huart3, (uint8_t *)rxBuffer3, sizeof(rxBuffer3) - 1);
-    }
-}
 
-/* 处理接收到的命令 */
-void ProcessCommand(char *cmd) {
-    if (strncmp(cmd, "CMD:START", 9) == 0) {
-        isWorking = 1;
-        char dbg[] = "Command: START\r\n";
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
-    } else if (strncmp(cmd, "CMD:STOP", 8) == 0) {
-        isWorking = 0;
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 关闭 RED LED
-        char dbg[] = "Command: STOP\r\n";
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
-    } else {
-        char dbg[] = "Unknown Command Received\r\n";
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
-    }
-}
 
-/* System Clock Configuration */
-void SystemClock_Config(void) {
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) {
+
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  {
     Error_Handler();
   }
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = 0;
   RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
-  RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 40;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
-  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
-  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_MSI;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
     Error_Handler();
   }
 }
 
-/* ADC1 Initialization */
-static void MX_ADC1_Init(void) {
-  ADC_ChannelConfTypeDef sConfig = {0};
-  hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
-  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
-  hadc1.Init.LowPowerAutoWait = DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.NbrOfConversion = 1;
-  hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
-  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
-  hadc1.Init.OversamplingMode = DISABLE;
-  if (HAL_ADC_Init(&hadc1) != HAL_OK) {
-    Error_Handler();
-  }
-  sConfig.Channel = ADC_CHANNEL_10;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_6CYCLES_5;
-  sConfig.SingleDiff = ADC_SINGLE_ENDED;
-  sConfig.OffsetNumber = ADC_OFFSET_NONE;
-  sConfig.Offset = 0;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
-    Error_Handler();
-  }
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+// Check for commands from Processing Board
+ProcessCommandFromProcessingBoard();
+}
 }
 
-/* GPIO Initialization */
-static void MX_GPIO_Init(void) {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // RED LED
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-}
-
-/* USART1 Initialization */
-static void MX_USART1_UART_Init(void) {
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart1) != HAL_OK) {
-    Error_Handler();
-  }
-}
-
-static void MX_USART2_UART_Init(void)
+void ProcessCommandFromProcessingBoard(void)
 {
-    huart2.Instance = USART2;
-    huart2.Init.BaudRate = 115200;
-    huart2.Init.WordLength = UART_WORDLENGTH_8B;
-    huart2.Init.StopBits = UART_STOPBITS_1;
-    huart2.Init.Parity = UART_PARITY_NONE;
-    huart2.Init.Mode = UART_MODE_TX_RX;
-    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-    huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-    huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-    if (HAL_UART_Init(&huart2) != HAL_OK)
-    {
-        Error_Handler();
-    }
+if (strstr((char *)rxBufferUart3, "CMD:START") != NULL)
+{
+// Clear buffer
+memset((char *)rxBufferUart3, 0, sizeof(rxBufferUart3));
+
+// Enable ADC sampling
+isSampling = 1;
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); // LED ON for sampling
+
+char ack[] = "ACK:START\r\n";
+HAL_UART_Transmit(&huart3, (uint8_t *)ack, strlen(ack), HAL_MAX_DELAY);
+}
+else if (strstr((char *)rxBufferUart3, "CMD:STOP") != NULL)
+{
+// Clear buffer
+memset((char *)rxBufferUart3, 0, sizeof(rxBufferUart3));
+
+// Disable ADC sampling
+isSampling = 0;
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); // LED OFF for sampling
+
+char ack[] = "ACK:STOP\r\n";
+HAL_UART_Transmit(&huart3, (uint8_t *)ack, strlen(ack), HAL_MAX_DELAY);
+}
 }
 
-/* USART3 Initialization */
-static void MX_USART3_UART_Init(void) {
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_TX_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart3) != HAL_OK) {
-    Error_Handler();
-  }
+/* DMA initialization */
+static void MX_DMA_Init(void)
+{
+__HAL_RCC_DMA1_CLK_ENABLE();
+
+HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 1, 0);
+HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 }
 
-void Error_Handler(void) {
-  /* User can add their own implementation to report the HAL error return state */
-  __disable_irq(); // 禁用中断，防止错误扩散
-  while (1) {
-    // 错误指示：闪烁板载 LED (PA5)
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-    HAL_Delay(500); // 500 毫秒闪烁
-  }
+/* USART1 init function */
+static void MX_USART1_UART_Init(void)
+{
+huart1.Instance = USART1;
+huart1.Init.BaudRate = 115200;
+huart1.Init.WordLength = UART_WORDLENGTH_8B;
+huart1.Init.StopBits = UART_STOPBITS_1;
+huart1.Init.Parity = UART_PARITY_NONE;
+huart1.Init.Mode = UART_MODE_TX_RX;
+huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+if (HAL_UART_Init(&huart1) != HAL_OK)
+{
+Error_Handler();
+}
 }
 
+/* USART3 init function */
+static void MX_USART3_UART_Init(void)
+{
+huart3.Instance = USART3;
+huart3.Init.BaudRate = 115200;
+huart3.Init.WordLength = UART_WORDLENGTH_8B;
+huart3.Init.StopBits = UART_STOPBITS_1;
+huart3.Init.Parity = UART_PARITY_NONE;
+huart3.Init.Mode = UART_MODE_TX_RX;
+huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+if (HAL_UART_Init(&huart3) != HAL_OK)
+{
+Error_Handler();
+}
+}
 
+/* ADC1 init function */
+static void MX_ADC1_Init(void)
+{
+hadc1.Instance = ADC1;
+hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
+hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+hadc1.Init.LowPowerAutoWait = DISABLE;
+hadc1.Init.ContinuousConvMode = DISABLE;
+hadc1.Init.NbrOfConversion = 1;
+hadc1.Init.DiscontinuousConvMode = DISABLE;
+hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+hadc1.Init.DMAContinuousRequests = ENABLE;
+hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+hadc1.Init.OversamplingMode = DISABLE;
+if (HAL_ADC_Init(&hadc1) != HAL_OK)
+{
+Error_Handler();
+}
+}
 
-
-
-
-
+/* Error Handler */
+void Error_Handler(void)
+{
+while (1)
+{
+HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+HAL_Delay(500);
+}
+}

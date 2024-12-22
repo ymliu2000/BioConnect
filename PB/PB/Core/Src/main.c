@@ -1,68 +1,178 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  */
+/* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <string.h>
 #include <stdio.h>
 
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define CMD_START "CMD:START"
+#define CMD_STOP  "CMD:STOP"
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
 /* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart1; // 与采集板通信
-UART_HandleTypeDef huart2; // 调试串口
-UART_HandleTypeDef huart3; // 发送命令
+UART_HandleTypeDef huart1;  // 处理板与采集板通信
+UART_HandleTypeDef huart2;  // 处理板与PC通信
+UART_HandleTypeDef huart3;  // 处理板与采集板反馈通信
 
-char rxBuffer[64];         // 接收采集板数据
-char dbg[128];             // 调试信息
+char rxBuffer1[64];
+char rxBuffer3[64];
+uint8_t is_working = 0;
+uint32_t last_command_time = 0;
 
-/* Function Prototypes -------------------------------------------------------*/
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+/* USER CODE BEGIN PFP */
+void ProcessCollectorData(char* line);
+void ProcessReceivedCommand(char* cmd);
+void SendStartCmd(void);
+void SendStopCmd(void);
+/* USER CODE END PFP */
 
-/* Main Program --------------------------------------------------------------*/
-int main(void) {
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1) // 接收采集板数据
+    {
+        rxBuffer1[63] = '\0';
+        ProcessCollectorData(rxBuffer1);
+
+        memset(rxBuffer1, 0, sizeof(rxBuffer1));
+        HAL_UART_Receive_IT(&huart1, (uint8_t *)rxBuffer1, sizeof(rxBuffer1) - 1);
+    }
+    else if (huart->Instance == USART3) // 接收采集板命令反馈
+    {
+        rxBuffer3[63] = '\0';
+        ProcessReceivedCommand(rxBuffer3);
+
+        memset(rxBuffer3, 0, sizeof(rxBuffer3));
+        HAL_UART_Receive_IT(&huart3, (uint8_t *)rxBuffer3, sizeof(rxBuffer3) - 1);
+    }
+}
+
+void ProcessCollectorData(char* line)
+{
+    char dbg[64];
+    sprintf(dbg, "Recv DATA: %s\r\n", line);
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), HAL_MAX_DELAY);
+}
+
+void ProcessReceivedCommand(char* cmd)
+{
+    char dbg[64];
+    if (strncmp(cmd, CMD_START, strlen(CMD_START)) == 0)
+    {
+        sprintf(dbg, "Recv ACK: START\r\n");
+    }
+    else if (strncmp(cmd, CMD_STOP, strlen(CMD_STOP)) == 0)
+    {
+        sprintf(dbg, "Recv ACK: STOP\r\n");
+    }
+    else
+    {
+        sprintf(dbg, "Unknown CMD: %s\r\n", cmd);
+    }
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), HAL_MAX_DELAY);
+}
+
+void SendStartCmd(void)
+{
+    char cmd[] = "CMD:START\r\n";
+    HAL_UART_Transmit(&huart1, (uint8_t*)cmd, strlen(cmd), HAL_MAX_DELAY);
+
+    char dbg[] = "Send CMD: START\r\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), HAL_MAX_DELAY);
+}
+
+void SendStopCmd(void)
+{
+    char cmd[] = "CMD:STOP\r\n";
+    HAL_UART_Transmit(&huart1, (uint8_t*)cmd, strlen(cmd), HAL_MAX_DELAY);
+
+    char dbg[] = "Send CMD: STOP\r\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), HAL_MAX_DELAY);
+}
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
     HAL_Init();
     SystemClock_Config();
+
     MX_GPIO_Init();
     MX_USART1_UART_Init();
     MX_USART2_UART_Init();
     MX_USART3_UART_Init();
 
-    // 初始化完成，打印信息
-    char initMsg[] = "Processing Board Initialized. Ready to Work.\r\n";
-    HAL_UART_Transmit(&huart2, (uint8_t *)initMsg, strlen(initMsg), HAL_MAX_DELAY);
+    memset(rxBuffer1, 0, sizeof(rxBuffer1));
+    HAL_UART_Receive_IT(&huart1, (uint8_t*)rxBuffer1, sizeof(rxBuffer1) - 1);
 
-    // 启动接收中断
-    HAL_UART_Receive_IT(&huart1, (uint8_t *)rxBuffer, sizeof(rxBuffer) - 1);
+    memset(rxBuffer3, 0, sizeof(rxBuffer3));
+    HAL_UART_Receive_IT(&huart3, (uint8_t*)rxBuffer3, sizeof(rxBuffer3) - 1);
 
-    while (1) {
-        // 发送 START 命令
-        char startCmd[] = "CMD:START\r\n";
-        HAL_UART_Transmit(&huart3, (uint8_t *)startCmd, strlen(startCmd), HAL_MAX_DELAY);
-        sprintf(dbg, "Sent Command to Collector: %s\r\n", startCmd);
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
+    char initMsg[] = "Processing Board Ready.\r\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)initMsg, strlen(initMsg), HAL_MAX_DELAY);
 
-        HAL_Delay(5000); // 模拟采集时间
-
-        // 发送 STOP 命令
-        char stopCmd[] = "CMD:STOP\r\n";
-        HAL_UART_Transmit(&huart3, (uint8_t *)stopCmd, strlen(stopCmd), HAL_MAX_DELAY);
-        sprintf(dbg, "Sent Command to Collector: %s\r\n", stopCmd);
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
-
-        HAL_Delay(5000); // 模拟停止时间
+    while (1)
+    {
+        uint32_t current_time = HAL_GetTick();
+        if (current_time - last_command_time >= 5000)
+        {
+            if (is_working)
+            {
+                SendStopCmd();
+            }
+            else
+            {
+                SendStartCmd();
+            }
+            is_working = !is_working;
+            last_command_time = current_time;
+        }
+        HAL_Delay(100);
     }
 }
 
-/* USART1 中断回调：接收采集板数据 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART1) {
-        rxBuffer[63] = '\0';
-        sprintf(dbg, "Received Data from Collector: %s\r\n", rxBuffer);
-        HAL_UART_Transmit(&huart2, (uint8_t *)dbg, strlen(dbg), HAL_MAX_DELAY);
-        memset(rxBuffer, 0, sizeof(rxBuffer));
-        HAL_UART_Receive_IT(&huart1, (uint8_t *)rxBuffer, sizeof(rxBuffer) - 1);
-    }
-}
+/* CubeMX Initialization Functions */
+
+/* USER CODE END 4 */
+
 
 
 /* System Clock Configuration */

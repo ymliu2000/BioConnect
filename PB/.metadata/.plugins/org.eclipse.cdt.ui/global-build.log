@@ -1,4 +1,4 @@
-15:52:08 **** Incremental Build of configuration Debug for project PB ****
+16:06:11 **** Incremental Build of configuration Debug for project PB ****
 make -j7 all 
 arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32L476xx -c -I../Core/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc -I../Drivers/STM32L4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32L4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
 arm-none-eabi-gcc -o "PB.elf" @"objects.list"   -mcpu=cortex-m4 -T"/Users/ebrietas/Desktop/BioConnect/PB/PB/STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="PB.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
@@ -7,15 +7,15 @@ Finished building target: PB.elf
 arm-none-eabi-size  PB.elf 
 arm-none-eabi-objdump -h -S PB.elf  > "PB.list"
    text	   data	    bss	    dec	    hex	filename
-  19824	     92	   2500	  22416	   5790	PB.elf
+  20284	     92	   2444	  22820	   5924	PB.elf
 Finished building: default.size.stdout
  
 Finished building: PB.list
  
-15:52:13 **** Incremental Build of configuration Debug for project PB ****
+16:06:15 **** Incremental Build of configuration Debug for project PB ****
 make -j7 all 
 arm-none-eabi-size  PB.elf 
    text	   data	    bss	    dec	    hex	filename
-  19824	     92	   2500	  22416	   5790	PB.elf
+  20284	     92	   2444	  22820	   5924	PB.elf
 Finished building: default.size.stdout
  
