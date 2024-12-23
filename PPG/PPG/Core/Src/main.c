@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdarg.h> //===修改=== 用于变参函数 (如 printf-style)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -76,6 +76,25 @@ typedef enum
     PREPROC_SF = 0,   // Squaring Filter
     PREPROC_EMA       // Exponential Moving Average
 } PreProcessType_t;
+
+/*
+ * ========== 函数指针类型定义 (去耦处理函数) =========
+ */
+// 预处理：输入uint32_t原始ADC，输出uint32_t结果
+typedef uint32_t (*PreprocFunc_t)(uint32_t);
+// 高级处理：若为心率=>返回uint16_t，血氧=>返回uint8_t等，这里简化为返回uint32_t
+typedef uint32_t (*AdvancedFunc_t)(uint32_t);
+
+/**
+  * @brief 用于“防止内存溢出/队列满”示例：简易环形缓冲
+  */
+#define LOG_BUF_SIZE  256
+typedef struct
+{
+    char  buffer[LOG_BUF_SIZE];
+    int   head;
+    int   tail;
+} RingBuffer_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -83,9 +102,9 @@ typedef enum
 // 将长按阈值改为 2 秒 (2000 ms)
 // 将长按阈值改为 2 秒 (2000 ms)
 #define LONG_PRESS_THRESHOLD   2000
-#define DEBOUNCE_INTERVAL      50    // 去抖间隔 (ms)
+#define DEBOUNCE_INTERVAL      50
 
-/* 下面定义板载LED引脚 (PA5) 以及不同状态下闪烁周期 */
+// LED
 #define LED_PIN                GPIO_PIN_5
 #define LED_PORT               GPIOA
 
@@ -105,56 +124,42 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-// 状态机全局变量
-volatile PressType_t g_pressEvent = PRESS_NONE;   // “短按/长按”事件 (在主循环中读取并清空)
-SystemState_t g_systemState = STATE_INIT;         // 当前状态
+//=== (1) 状态机相关全局变量 ===
+volatile PressType_t   g_pressEvent = PRESS_NONE;
+SystemState_t          g_systemState  = STATE_INIT;
 
-MeasureType_t g_measureType = MEASURE_HR;         // 高级处理：默认心率
-WorkMode_t g_workMode = MODE_RED;                 // 工作模式：默认红光
-PreProcessType_t g_preprocType = PREPROC_SF;      // 预处理：默认 Squaring Filter
+MeasureType_t    g_measureType  = MEASURE_HR;
+WorkMode_t       g_workMode     = MODE_RED;
+PreProcessType_t g_preprocType  = PREPROC_SF;
 
-/* =============== 示例算法区域 =============== */
+//=== (2) 函数声明/指针表，用于解耦处理逻辑 ===
+static uint32_t applySquaringFilter(uint32_t input);
+static uint32_t applyExponentialMovingAverage(uint32_t input);
+static uint32_t computeHeartRate(uint32_t value);
+static uint32_t computeSpO2(uint32_t value);
 
-/**
-  * @brief 用于演示的“Squaring Filter”预处理
-  */
-static uint32_t applySquaringFilter(uint32_t input)
+/* 预处理函数指针表 */
+static PreprocFunc_t g_preprocFuncs[] =
 {
-    uint64_t squared = (uint64_t)input * (uint64_t)input;
-    if (squared > 0xFFFFFFFF)
-        squared = 0xFFFFFFFF;
-    return (uint32_t)squared;
-}
-
-/**
-  * @brief 用于演示的“Exponential Moving Average”预处理
-  */
-static uint32_t applyExponentialMovingAverage(uint32_t input)
+    applySquaringFilter,         // PREPROC_SF
+    applyExponentialMovingAverage// PREPROC_EMA
+};
+/* 高级处理函数指针表 (HR, SpO2) */
+static AdvancedFunc_t g_advancedFuncs[] =
 {
-    static float emaVal = 0.0f;
-    float alpha = 0.1f;
+    computeHeartRate,  // MEASURE_HR
+    computeSpO2        // MEASURE_SPO2
+};
 
-    emaVal = alpha * (float)input + (1.0f - alpha) * emaVal;
-    return (uint32_t)emaVal;
-}
+//=== (3) 环形缓冲区，用于存放日志字符串或其他数据 ===
+static RingBuffer_t g_logRB = {
+    .buffer = {0},
+    .head   = 0,
+    .tail   = 0
+};
 
-/**
-  * @brief 用于演示的“心率”计算
-  */
-static uint16_t computeHeartRate(uint32_t value)
-{
-    // 简单映射：HR = 60 + (value % 40)
-    return 60 + (value % 40);
-}
-
-/**
-  * @brief 用于演示的“血氧”计算
-  */
-static uint8_t computeSpO2(uint32_t value)
-{
-    // 简单映射：SpO2 = 95 + (value % 5)
-    return 95 + (value % 5);
-}
+//=== (4) 静态变量，用于EMA算法或其他运算 ===
+static float s_emaVal = 0.0f; // 用于ExponentialMovingAverage
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -164,17 +169,48 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-static void enterErrorState(void);
+//=== 环形缓冲函数 ===
+static void RB_Init(RingBuffer_t* rb);
+static int  RB_Write(RingBuffer_t* rb, const char* data, int len);
+static int  RB_Read(RingBuffer_t* rb, char* out, int maxlen);
 
-/**
-  * @brief 根据当前状态更新板载LED闪烁/常亮/熄灭
-  */
+//=== 本地辅助打印函数 (写入环形缓冲, 避免队列满时溢出) ===
+static void logPrintf(const char* fmt, ...);
+static void processLogBuffer(void);
+
+//=== 其他函数 (LED, Error, etc.) ===
+static void enterErrorState(void);
 static void updateLED(SystemState_t state);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* ================== 解耦的函数实现 ================== */
+static uint32_t applySquaringFilter(uint32_t input)
+{
+    uint64_t sq = (uint64_t)input * (uint64_t)input;
+    if (sq > 0xFFFFFFFF) sq = 0xFFFFFFFF;
+    return (uint32_t)sq;
+}
 
+static uint32_t applyExponentialMovingAverage(uint32_t input)
+{
+    float alpha = 0.1f;
+    s_emaVal = alpha*input + (1.0f-alpha)*s_emaVal;
+    return (uint32_t)s_emaVal;
+}
+
+static uint32_t computeHeartRate(uint32_t value)
+{
+    // 简单映射: 60 + (value % 40)
+    return 60 + (value % 40);
+}
+
+static uint32_t computeSpO2(uint32_t value)
+{
+    // 简单映射: 95 + (value % 5)
+    return 95 + (value % 5);
+}
 /* USER CODE END 0 */
 
 /**
@@ -185,8 +221,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	  char msg[100];
-	  uint32_t adcValue = 0;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -211,12 +246,16 @@ int main(void)
   MX_ADC1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  sprintf(msg, "System Started. Current State: INIT\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+  //=== 初始化环形缓冲, 确保head/tail=0 ===
+  RB_Init(&g_logRB);
 
-  // 上电后，默认关闭红光和IR
+  // 打印启动消息
+  logPrintf("System Started. Current State: INIT\r\n");
+
+  // 默认关闭红光和IR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+
 
 
   /* USER CODE END 2 */
@@ -229,112 +268,86 @@ int main(void)
 	    PressType_t currentPress = g_pressEvent;
 	    if (currentPress != PRESS_NONE)
 	    {
-	      g_pressEvent = PRESS_NONE; // 清除事件，避免重复触发
-
-	      // 根据当前系统状态 & 按键类型，做状态转移或动作
+	      g_pressEvent = PRESS_NONE;
 	      switch (g_systemState)
 	      {
 	        case STATE_INIT:
-	          // INIT 下，仅识别长按 => 进入 WORKMODE_SELECT
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_WORKMODE_SELECT;
-	            sprintf(msg, "System -> WORKMODE_SELECT\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	            logPrintf("System -> WORKMODE_SELECT\r\n");
 	          }
 	          break;
 
 	        case STATE_WORKMODE_SELECT:
-	          // 短按 => 在RED和IR之间切换
-	          // 长按 => 进入PREPROCESS_SELECT
 	          if (currentPress == PRESS_SHORT)
 	          {
 	            g_workMode = (g_workMode == MODE_RED) ? MODE_IR : MODE_RED;
 	            if (g_workMode == MODE_RED)
-	              sprintf(msg, "Selected WorkMode: RED\r\n");
+	              logPrintf("Selected WorkMode: RED\r\n");
 	            else
-	              sprintf(msg, "Selected WorkMode: IR\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	              logPrintf("Selected WorkMode: IR\r\n");
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_PREPROCESS_SELECT;
-	            sprintf(msg, "System -> PREPROCESS_SELECT\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	            logPrintf("System -> PREPROCESS_SELECT\r\n");
 	          }
 	          break;
 
 	        case STATE_PREPROCESS_SELECT:
-	          // 短按 => SF / EMA 切换
-	          // 长按 => 进入ADVANCED_SELECT
 	          if (currentPress == PRESS_SHORT)
 	          {
-	            g_preprocType = (g_preprocType == PREPROC_SF) ? PREPROC_EMA : PREPROC_SF;
+	            g_preprocType = (g_preprocType==PREPROC_SF)? PREPROC_EMA: PREPROC_SF;
 	            if (g_preprocType == PREPROC_SF)
-	              sprintf(msg, "Selected PreProcessing: Squaring Filter\r\n");
+	              logPrintf("Selected PreProcessing: Squaring Filter\r\n");
 	            else
-	              sprintf(msg, "Selected PreProcessing: Exponential Moving Average\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	              logPrintf("Selected PreProcessing: ExponentialMovingAverage\r\n");
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_ADVANCED_SELECT;
-	            sprintf(msg, "System -> ADVANCED_SELECT\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	            logPrintf("System -> ADVANCED_SELECT\r\n");
 	          }
 	          break;
 
 	        case STATE_ADVANCED_SELECT:
-	          // 短按 => 心率 / 血氧 切换
-	          // 长按 => RUNNING
 	          if (currentPress == PRESS_SHORT)
 	          {
-	            g_measureType = (g_measureType == MEASURE_HR) ? MEASURE_SPO2 : MEASURE_HR;
+	            g_measureType = (g_measureType==MEASURE_HR)? MEASURE_SPO2: MEASURE_HR;
 	            if (g_measureType == MEASURE_HR)
-	              sprintf(msg, "Selected Advanced: Heart Rate\r\n");
+	              logPrintf("Selected Advanced: Heart Rate\r\n");
 	            else
-	              sprintf(msg, "Selected Advanced: SpO2\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	              logPrintf("Selected Advanced: SpO2\r\n");
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_RUNNING;
-	            sprintf(msg, "System -> RUNNING\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	            logPrintf("System -> RUNNING\r\n");
 	          }
 	          break;
 
 	        case STATE_RUNNING:
-	          // 在 RUNNING 下，长按 => 回到 INIT
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_INIT;
-	            sprintf(msg, "System -> INIT\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-	            // 关闭所有LED
+	            logPrintf("System -> INIT\r\n");
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	          }
-	          // 短按在 RUNNING 暂不处理
 	          break;
 
 	        case STATE_ERROR:
-	          // 在 ERROR 下，长按 => 回到 INIT
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_INIT;
-	            sprintf(msg, "System -> INIT (from ERROR)\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-	            // 关闭所有LED
+	            logPrintf("System -> INIT (from ERROR)\r\n");
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	          }
 	          break;
 
 	        default:
-	          // 防御式处理 => ERROR
 	          enterErrorState();
 	          break;
 	      }
@@ -344,84 +357,71 @@ int main(void)
 	    switch (g_systemState)
 	    {
 	      case STATE_INIT:
-	        // INIT: 不做ADC采集
-	        break;
-
 	      case STATE_WORKMODE_SELECT:
-	        // 不做ADC采集，等待用户选择RED/IR
-	        break;
-
 	      case STATE_PREPROCESS_SELECT:
-	        // 不做ADC采集，等待用户选择SF/EMA
-	        break;
-
 	      case STATE_ADVANCED_SELECT:
-	        // 不做ADC采集，等待用户选择HR/SpO2
+	        // 不采集ADC
 	        break;
 
 	      case STATE_RUNNING:
 	      {
-	        // 根据工作模式开/关对应LED
+	        // 根据模式点亮对应LED
 	        if (g_workMode == MODE_RED)
 	        {
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 打开红光(低电平有效)
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	        }
 	        else
 	        {
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // 打开IR
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
 	        }
 
-	        // 采集ADC
+	        // 原先的轮询采ADC
 	        HAL_ADC_Start(&hadc1);
 	        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
 	        {
-	          adcValue = HAL_ADC_GetValue(&hadc1);
+	          uint32_t adcValue = HAL_ADC_GetValue(&hadc1);
 
-	          // 先做预处理
-	          uint32_t preprocessedValue = adcValue;
-	          if (g_preprocType == PREPROC_SF)
-	          {
-	            preprocessedValue = applySquaringFilter(adcValue);
-	          }
-	          else
-	          {
-	            preprocessedValue = applyExponentialMovingAverage(adcValue);
-	          }
+	          //=== “解耦”处理：预处理 + 高级处理
+	          // 先调用预处理函数指针
+	          uint32_t preVal = g_preprocFuncs[g_preprocType](adcValue);
+	          // 再调用高级处理函数指针
+	          uint32_t outVal = g_advancedFuncs[g_measureType](preVal);
 
-	          // 再做高级处理
+	          // 打印 (在同一行覆盖)
+	          char line[80];
 	          if (g_measureType == MEASURE_HR)
 	          {
-	            uint16_t hrValue = computeHeartRate(preprocessedValue);
-	            sprintf(msg, "\rADC:%lu ->Pre:%lu ->HR:%u bpm      ",
-	                    adcValue, preprocessedValue, hrValue);
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->HR:%lu bpm     ",
+	                    adcValue, preVal, outVal);
 	          }
 	          else
 	          {
-	            uint8_t spo2Value = computeSpO2(preprocessedValue);
-	            sprintf(msg, "\rADC:%lu ->Pre:%lu ->SpO2:%u%%      ",
-	                    adcValue, preprocessedValue, spo2Value);
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->SpO2:%lu%%     ",
+	                    adcValue, preVal, outVal);
 	          }
-	          HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          logPrintf(line); // 写入环形缓冲
 	        }
 	        break;
 	      }
 
 	      case STATE_ERROR:
-	        // 在 ERROR 状态下，你可让 LED 快速闪烁，或等待用户长按恢复
+	        // 这里可以进行LED快速闪烁或等长按回到INIT
 	        break;
 
 	      default:
-	        // 防御式处理 => ERROR
 	        enterErrorState();
 	        break;
 	    }
 
-	    // 3. 每次循环调用LED更新函数，让板载LED指示当前状态
+	    // 3. LED更新
 	    updateLED(g_systemState);
 
-	    HAL_Delay(10); // 小延时，防止主循环过于频繁
+	    // 4. 处理日志队列 => 发送到UART
+	    processLogBuffer();
+
+	    HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -640,7 +640,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 /**
-  * @brief EXTI 回调函数：识别短按/长按
+  * @brief EXTI 回调：识别短按/长按
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -650,14 +650,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   if (GPIO_Pin == GPIO_PIN_13)
   {
     uint32_t now = HAL_GetTick();
-
-    // 简单去抖
     if ((now - lastInterruptTime) < DEBOUNCE_INTERVAL)
       return;
     lastInterruptTime = now;
 
     GPIO_PinState pinState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
-
     if (pinState == GPIO_PIN_RESET)
     {
       // 下降沿 => 按下
@@ -668,78 +665,73 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       // 上升沿 => 松开
       uint32_t pressDuration = now - pressStartTime;
       if (pressDuration >= LONG_PRESS_THRESHOLD)
-      {
         g_pressEvent = PRESS_LONG;
-      }
       else
-      {
         g_pressEvent = PRESS_SHORT;
-      }
     }
   }
 }
 
-/**
-  * @brief 根据当前状态让板载LED闪烁或常亮/熄灭
-  */
-static void updateLED(SystemState_t state)
+//=== 简易环形缓冲函数实现 ===
+static void RB_Init(RingBuffer_t* rb)
 {
-  // 假设高电平=灭，低电平=亮
-  static uint32_t lastToggleTime = 0;
-  static GPIO_PinState ledState  = GPIO_PIN_RESET; // 初始默认熄灭/亮，可以微调
+    rb->head = 0;
+    rb->tail = 0;
+    memset(rb->buffer, 0, LOG_BUF_SIZE);
+}
 
-  uint32_t now = HAL_GetTick();
-  uint32_t blinkInterval = 0; // 0=熄灭, 0xFFFFFFFF=常亮, 其他=闪烁周期
-
-  switch (state)
-  {
-    case STATE_INIT:
-      // 灭灯
-      blinkInterval = 0;
-      break;
-    case STATE_WORKMODE_SELECT:
-      blinkInterval = 500; // 慢闪
-      break;
-    case STATE_PREPROCESS_SELECT:
-      blinkInterval = 300; // 中闪
-      break;
-    case STATE_ADVANCED_SELECT:
-      blinkInterval = 200; // 快闪
-      break;
-    case STATE_RUNNING:
-      blinkInterval = 0xFFFFFFFF; // 常亮
-      break;
-    case STATE_ERROR:
-      blinkInterval = 100; // 超快闪
-      break;
-    default:
-      blinkInterval = 0;
-      break;
-  }
-
-  if (blinkInterval == 0)
-  {
-    // 始终灭
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
-    ledState = GPIO_PIN_SET;
-  }
-  else if (blinkInterval == 0xFFFFFFFF)
-  {
-    // 常亮
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
-    ledState = GPIO_PIN_RESET;
-  }
-  else
-  {
-    // 闪烁
-    if ((now - lastToggleTime) >= blinkInterval)
+static int RB_Write(RingBuffer_t* rb, const char* data, int len)
+{
+    int count=0;
+    for(int i=0; i<len; i++)
     {
-      lastToggleTime = now;
-      // 翻转电平
-      ledState = (ledState == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-      HAL_GPIO_WritePin(LED_PORT, LED_PIN, ledState);
+        int nextHead = (rb->head+1) % LOG_BUF_SIZE;
+        // 队列满, 丢弃剩余数据
+        if(nextHead == rb->tail)
+            break; // 这里简单丢弃
+
+        rb->buffer[rb->head] = data[i];
+        rb->head = nextHead;
+        count++;
     }
-  }
+    return count;
+}
+
+static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
+{
+    int count=0;
+    while(rb->tail != rb->head && count<(maxlen-1))
+    {
+        out[count] = rb->buffer[rb->tail];
+        rb->tail = (rb->tail+1) % LOG_BUF_SIZE;
+        count++;
+    }
+    out[count] = '\0';
+    return count;
+}
+
+//=== 将可变参数字符串写入环形缓冲 (防止高频日志溢出) ===
+static void logPrintf(const char* fmt, ...)
+{
+    char tmp[128];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_end(ap);
+
+    // 写入环形缓冲
+    RB_Write(&g_logRB, tmp, strlen(tmp));
+}
+
+//=== 从环形缓冲中取数据并发送UART ===
+static void processLogBuffer(void)
+{
+    char out[64];
+    int readCount = RB_Read(&g_logRB, out, sizeof(out));
+    if(readCount>0)
+    {
+        HAL_UART_Transmit(&huart2, (uint8_t*)out, readCount, HAL_MAX_DELAY);
+    }
 }
 
 /**
@@ -748,13 +740,67 @@ static void updateLED(SystemState_t state)
 static void enterErrorState(void)
 {
   g_systemState = STATE_ERROR;
-  char msg[50];
-  sprintf(msg, "System -> ERROR\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+  logPrintf("System -> ERROR\r\n");
 
   // 关灯
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+}
+
+/**
+  * @brief 根据当前状态让板载LED闪烁或常亮/熄灭
+  */
+static void updateLED(SystemState_t state)
+{
+  static uint32_t lastToggleTime = 0;
+  static GPIO_PinState ledState  = GPIO_PIN_SET;
+  uint32_t now = HAL_GetTick();
+  uint32_t blinkInterval = 0;
+
+  switch (state)
+  {
+    case STATE_INIT:
+      blinkInterval = 0;         // 灭
+      break;
+    case STATE_WORKMODE_SELECT:
+      blinkInterval = 500;       // 慢闪
+      break;
+    case STATE_PREPROCESS_SELECT:
+      blinkInterval = 300;       // 中闪
+      break;
+    case STATE_ADVANCED_SELECT:
+      blinkInterval = 200;       // 快闪
+      break;
+    case STATE_RUNNING:
+      blinkInterval = 0xFFFFFFFF;// 常亮
+      break;
+    case STATE_ERROR:
+      blinkInterval = 100;       // 超快闪
+      break;
+    default:
+      blinkInterval = 0;
+      break;
+  }
+
+  if(blinkInterval == 0)
+  {
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+    ledState = GPIO_PIN_SET;
+  }
+  else if(blinkInterval == 0xFFFFFFFF)
+  {
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+    ledState = GPIO_PIN_RESET;
+  }
+  else
+  {
+    if((now - lastToggleTime) >= blinkInterval)
+    {
+      lastToggleTime = now;
+      ledState = (ledState==GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+      HAL_GPIO_WritePin(LED_PORT, LED_PIN, ledState);
+    }
+  }
 }
 /* USER CODE END 4 */
 

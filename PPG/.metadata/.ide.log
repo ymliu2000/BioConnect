@@ -1,1 +1,46 @@
 2024-12-23 00:58:06,429 [INFO] DmaTabbedPanel:205 - Cannot restore the selected Tab for DMA
+2024-12-23 05:39:26,287 [INFO] WebApp:190 - Connection lost
+2024-12-23 05:39:31,208 [INFO] WebApp:187 - Connection restablished
+2024-12-23 10:34:50,690 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,728 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,732 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,733 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,734 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,735 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,735 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,735 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,736 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,737 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,737 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,737 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,738 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,738 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,738 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,738 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,738 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,739 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,739 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:50,739 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,001 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,292 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,305 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,307 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,308 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,308 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,309 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,310 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,311 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,311 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,311 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,312 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,312 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,312 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,313 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,313 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,313 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,314 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,314 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,315 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,315 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,552 [INFO] ADCParametersView:116 -                Rank 1 : false
+2024-12-23 10:34:51,656 [INFO] NvicIntPanel:101 - NVIC parent = com.st.microxplorer.plugins.ip.nvic.MultiNvicIntPanel[,0,0,0x0,invalid,layout=javax.swing.BoxLayout,alignmentX=0.0,alignmentY=0.0,border=,flags=9,maximumSize=,minimumSize=,preferredSize=]
