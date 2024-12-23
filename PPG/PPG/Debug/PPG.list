@@ -27,9 +27,9 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   ALLOC
  11 .ARM.attributes 00000030  00000000  00000000  00007070  2**0
                   CONTENTS, READONLY
- 12 .debug_info   0000ee6f  00000000  00000000  000070a0  2**0
+ 12 .debug_info   0000ee70  00000000  00000000  000070a0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 13 .debug_abbrev 00001f00  00000000  00000000  00015f0f  2**0
+ 13 .debug_abbrev 00001f00  00000000  00000000  00015f10  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  14 .debug_aranges 00000d10  00000000  00000000  00017e10  2**3
                   CONTENTS, READONLY, DEBUGGING, OCTETS
@@ -37,15 +37,15 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  16 .debug_macro  0002783d  00000000  00000000  0001953e  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_line   0000e849  00000000  00000000  00040d7b  2**0
+ 17 .debug_line   0000e84d  00000000  00000000  00040d7b  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    000faf33  00000000  00000000  0004f5c4  2**0
+ 18 .debug_str    000faf33  00000000  00000000  0004f5c8  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000043  00000000  00000000  0014a4f7  2**0
+ 19 .comment      00000043  00000000  00000000  0014a4fb  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  00003c64  00000000  00000000  0014a53c  2**2
+ 20 .debug_frame  00003c64  00000000  00000000  0014a540  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line_str 00000059  00000000  00000000  0014e1a0  2**0
+ 21 .debug_line_str 00000059  00000000  00000000  0014e1a4  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -414,10 +414,10 @@ Disassembly of section .text:
  800056e:	bf00      	nop
 
 08000570 <applySquaringFilter>:
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-/* ================== 解耦的函数实现 ================== */
+  * @brief Squaring Filter
+  * @param input Original ADC value
+  * @return Squared result, clipped to 32-bit
+  */
 static uint32_t applySquaringFilter(uint32_t input)
 {
  8000570:	e92d 03b0 	stmdb	sp!, {r4, r5, r7, r8, r9}
@@ -459,7 +459,10 @@ static uint32_t applySquaringFilter(uint32_t input)
 	...
 
 080005c8 <applyExponentialMovingAverage>:
-
+  * @brief Exponential Moving Average
+  * @param input Original ADC value
+  * @return EMA result (uint32_t)
+  */
 static uint32_t applyExponentialMovingAverage(uint32_t input)
 {
  80005c8:	b480      	push	{r7}
@@ -469,7 +472,7 @@ static uint32_t applyExponentialMovingAverage(uint32_t input)
     float alpha = 0.1f;
  80005d0:	4b13      	ldr	r3, [pc, #76]	@ (8000620 <applyExponentialMovingAverage+0x58>)
  80005d2:	60fb      	str	r3, [r7, #12]
-    s_emaVal = alpha*input + (1.0f-alpha)*s_emaVal;
+    s_emaVal = alpha * input + (1.0f - alpha) * s_emaVal;
  80005d4:	687b      	ldr	r3, [r7, #4]
  80005d6:	ee07 3a90 	vmov	s15, r3
  80005da:	eeb8 7a67 	vcvt.f32.u32	s14, s15
@@ -499,14 +502,17 @@ static uint32_t applyExponentialMovingAverage(uint32_t input)
  8000624:	20000288 	.word	0x20000288
 
 08000628 <computeHeartRate>:
-
+  * @brief Compute Heart Rate
+  * @param value Preprocessed result
+  * @return Heart Rate
+  */
 static uint32_t computeHeartRate(uint32_t value)
 {
  8000628:	b480      	push	{r7}
  800062a:	b083      	sub	sp, #12
  800062c:	af00      	add	r7, sp, #0
  800062e:	6078      	str	r0, [r7, #4]
-    // 简单映射: 60 + (value % 40)
+    // 60 + (value mod 40) for demonstration
     return 60 + (value % 40);
  8000630:	6879      	ldr	r1, [r7, #4]
  8000632:	4b08      	ldr	r3, [pc, #32]	@ (8000654 <computeHeartRate+0x2c>)
@@ -527,14 +533,17 @@ static uint32_t computeHeartRate(uint32_t value)
  8000654:	cccccccd 	.word	0xcccccccd
 
 08000658 <computeSpO2>:
-
+  * @brief Compute SpO2
+  * @param value Preprocessed result
+  * @return SpO2
+  */
 static uint32_t computeSpO2(uint32_t value)
 {
  8000658:	b480      	push	{r7}
  800065a:	b083      	sub	sp, #12
  800065c:	af00      	add	r7, sp, #0
  800065e:	6078      	str	r0, [r7, #4]
-    // 简单映射: 95 + (value % 5)
+    // 95 + (value mod 5) for demonstration
     return 95 + (value % 5);
  8000660:	6879      	ldr	r1, [r7, #4]
  8000662:	4b08      	ldr	r3, [pc, #32]	@ (8000684 <computeSpO2+0x2c>)
@@ -590,17 +599,17 @@ int main(void)
   MX_USART2_UART_Init();
  800069e:	f000 fa5d 	bl	8000b5c <MX_USART2_UART_Init>
   /* USER CODE BEGIN 2 */
-  //=== 初始化环形缓冲, 确保head/tail=0 ===
+  // Initialize ring buffer, head/tail=0
   RB_Init(&g_logRB);
  80006a2:	48b1      	ldr	r0, [pc, #708]	@ (8000968 <main+0x2e0>)
  80006a4:	f000 fb20 	bl	8000ce8 <RB_Init>
 
-  // 打印启动消息
+  // Print start message
   logPrintf("System Started.\r\nCurrent State: INIT\r\n");
  80006a8:	48b0      	ldr	r0, [pc, #704]	@ (800096c <main+0x2e4>)
  80006aa:	f000 fba9 	bl	8000e00 <logPrintf>
 
-  // 默认关闭红光和IR
+  // Disable RED/IR by default
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
  80006ae:	2201      	movs	r2, #1
  80006b0:	2101      	movs	r1, #1
@@ -615,7 +624,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	    // 1. 读取本次的按键事件
+	    // 1. Check if there is a new button event
 	    PressType_t currentPress = g_pressEvent;
  80006c6:	4baa      	ldr	r3, [pc, #680]	@ (8000970 <main+0x2e8>)
  80006c8:	781b      	ldrb	r3, [r3, #0]
@@ -625,10 +634,13 @@ int main(void)
  80006d2:	2b00      	cmp	r3, #0
  80006d4:	f000 80d0 	beq.w	8000878 <main+0x1f0>
 	    {
+	      // Reset the event flag after reading
 	      g_pressEvent = PRESS_NONE;
  80006d8:	4ba5      	ldr	r3, [pc, #660]	@ (8000970 <main+0x2e8>)
  80006da:	2200      	movs	r2, #0
  80006dc:	701a      	strb	r2, [r3, #0]
+
+	      // State machine transitions based on button events
 	      switch (g_systemState)
  80006de:	4ba5      	ldr	r3, [pc, #660]	@ (8000974 <main+0x2ec>)
  80006e0:	781b      	ldrb	r3, [r3, #0]
@@ -645,6 +657,7 @@ int main(void)
  8000704:	0800082f 	.word	0x0800082f
 	      {
 	        case STATE_INIT:
+	          // If long press in INIT, go to WORKMODE_SELECT
 	          if (currentPress == PRESS_LONG)
  8000708:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  800070c:	2b02      	cmp	r3, #2
@@ -662,6 +675,7 @@ int main(void)
  800071e:	e0a0      	b.n	8000862 <main+0x1da>
 
 	        case STATE_WORKMODE_SELECT:
+	          // Short press toggles RED or IR
 	          if (currentPress == PRESS_SHORT)
  8000720:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  8000724:	2b01      	cmp	r3, #1
@@ -713,12 +727,13 @@ int main(void)
  800076a:	e07c      	b.n	8000866 <main+0x1de>
 
 	        case STATE_PREPROCESS_SELECT:
+	          // Short press toggles SF or EMA
 	          if (currentPress == PRESS_SHORT)
  800076c:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  8000770:	2b01      	cmp	r3, #1
  8000772:	d115      	bne.n	80007a0 <main+0x118>
 	          {
-	            g_preprocType = (g_preprocType==PREPROC_SF)? PREPROC_EMA: PREPROC_SF;
+	            g_preprocType = (g_preprocType == PREPROC_SF) ? PREPROC_EMA : PREPROC_SF;
  8000774:	4b85      	ldr	r3, [pc, #532]	@ (800098c <main+0x304>)
  8000776:	781b      	ldrb	r3, [r3, #0]
  8000778:	2b00      	cmp	r3, #0
@@ -734,6 +749,8 @@ int main(void)
  800078a:	781b      	ldrb	r3, [r3, #0]
  800078c:	2b00      	cmp	r3, #0
  800078e:	d103      	bne.n	8000798 <main+0x110>
+	            	/* ----------------------------------------------------------------------------*/
+	            	/* Yuchen Wang's code BEGIN */
 	              logPrintf("Selected PreProcessing Algorithm: Squaring Filter\r\n");
  8000790:	487f      	ldr	r0, [pc, #508]	@ (8000990 <main+0x308>)
  8000792:	f000 fb35 	bl	8000e00 <logPrintf>
@@ -764,12 +781,13 @@ int main(void)
  80007b4:	e059      	b.n	800086a <main+0x1e2>
 
 	        case STATE_ADVANCED_SELECT:
+	          // Short press toggles HR or SpO2
 	          if (currentPress == PRESS_SHORT)
  80007b6:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  80007ba:	2b01      	cmp	r3, #1
  80007bc:	d115      	bne.n	80007ea <main+0x162>
 	          {
-	            g_measureType = (g_measureType==MEASURE_HR)? MEASURE_SPO2: MEASURE_HR;
+	            g_measureType = (g_measureType == MEASURE_HR) ? MEASURE_SPO2 : MEASURE_HR;
  80007be:	4b77      	ldr	r3, [pc, #476]	@ (800099c <main+0x314>)
  80007c0:	781b      	ldrb	r3, [r3, #0]
  80007c2:	2b00      	cmp	r3, #0
@@ -785,6 +803,8 @@ int main(void)
  80007d4:	781b      	ldrb	r3, [r3, #0]
  80007d6:	2b00      	cmp	r3, #0
  80007d8:	d103      	bne.n	80007e2 <main+0x15a>
+	            	/* ----------------------------------------------------------------------------*/
+	            	/* Yuchen Wang's code BEGIN */
 	              logPrintf("Selected Advanced Processing Algorithm: Heart Rate\r\n");
  80007da:	4871      	ldr	r0, [pc, #452]	@ (80009a0 <main+0x318>)
  80007dc:	f000 fb10 	bl	8000e00 <logPrintf>
@@ -815,6 +835,7 @@ int main(void)
  80007fe:	e036      	b.n	800086e <main+0x1e6>
 
 	        case STATE_RUNNING:
+	          // Long press returns to INIT, turns off LEDs
 	          if (currentPress == PRESS_LONG)
  8000800:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  8000804:	2b02      	cmp	r3, #2
@@ -842,6 +863,7 @@ int main(void)
  800082c:	e021      	b.n	8000872 <main+0x1ea>
 
 	        case STATE_ERROR:
+	          // Long press in ERROR goes back to INIT
 	          if (currentPress == PRESS_LONG)
  800082e:	f897 305f 	ldrb.w	r3, [r7, #95]	@ 0x5f
  8000832:	2b02      	cmp	r3, #2
@@ -869,6 +891,7 @@ int main(void)
  800085a:	e00c      	b.n	8000876 <main+0x1ee>
 
 	        default:
+	          // If an undefined state, go to ERROR
 	          enterErrorState();
  800085c:	f000 fb14 	bl	8000e88 <enterErrorState>
 	          break;
@@ -893,7 +916,7 @@ int main(void)
 	      }
 	    }
 
-	    // 2. 根据当前状态执行“状态行为”
+	    // 2. Perform state-specific operations
 	    switch (g_systemState)
  8000878:	4b3e      	ldr	r3, [pc, #248]	@ (8000974 <main+0x2ec>)
  800087a:	781b      	ldrb	r3, [r3, #0]
@@ -912,7 +935,7 @@ int main(void)
 
 	      case STATE_RUNNING:
 	      {
-	        // 根据模式点亮对应LED
+	        // Turn on the correct LED based on chosen mode
 	        if (g_workMode == MODE_RED)
  8000892:	4b3a      	ldr	r3, [pc, #232]	@ (800097c <main+0x2f4>)
  8000894:	781b      	ldrb	r3, [r3, #0]
@@ -945,7 +968,7 @@ int main(void)
  80008c8:	f002 fa92 	bl	8002df0 <HAL_GPIO_WritePin>
 	        }
 
-	        // 原先的轮询采ADC
+	        // Single ADC poll
 	        HAL_ADC_Start(&hadc1);
  80008cc:	4839      	ldr	r0, [pc, #228]	@ (80009b4 <main+0x32c>)
  80008ce:	f001 f8cd 	bl	8001a6c <HAL_ADC_Start>
@@ -962,8 +985,7 @@ int main(void)
  80008e2:	f001 fa55 	bl	8001d90 <HAL_ADC_GetValue>
  80008e6:	65b8      	str	r0, [r7, #88]	@ 0x58
 
-	          //=== “解耦”处理：预处理 + 高级处理
-	          // 先调用预处理函数指针
+	          // Preprocessing and advanced processing
 	          uint32_t preVal = g_preprocFuncs[g_preprocType](adcValue);
  80008e8:	4b28      	ldr	r3, [pc, #160]	@ (800098c <main+0x304>)
  80008ea:	781b      	ldrb	r3, [r3, #0]
@@ -973,7 +995,6 @@ int main(void)
  80008f4:	6db8      	ldr	r0, [r7, #88]	@ 0x58
  80008f6:	4798      	blx	r3
  80008f8:	6578      	str	r0, [r7, #84]	@ 0x54
-	          // 再调用高级处理函数指针
 	          uint32_t outVal = g_advancedFuncs[g_measureType](preVal);
  80008fa:	4b28      	ldr	r3, [pc, #160]	@ (800099c <main+0x314>)
  80008fc:	781b      	ldrb	r3, [r3, #0]
@@ -984,7 +1005,7 @@ int main(void)
  8000908:	4798      	blx	r3
  800090a:	6538      	str	r0, [r7, #80]	@ 0x50
 
-	          // 打印 (在同一行覆盖)
+	          // Format and log the result
 	          char line[80];
 	          if (g_measureType == MEASURE_HR)
  800090c:	4b23      	ldr	r3, [pc, #140]	@ (800099c <main+0x314>)
@@ -1015,18 +1036,18 @@ int main(void)
  8000932:	f004 fb59 	bl	8004fe8 <siprintf>
 	                    adcValue, preVal, outVal);
 	          }
-	          logPrintf(line); // 写入环形缓冲
+	          logPrintf(line);
  8000936:	463b      	mov	r3, r7
  8000938:	4618      	mov	r0, r3
  800093a:	f000 fa61 	bl	8000e00 <logPrintf>
 	        }
 	        break;
  800093e:	e006      	b.n	800094e <main+0x2c6>
-	      case STATE_ERROR:
-	        // 这里可以进行LED快速闪烁或等长按回到INIT
+	        // Could flash LED quickly or await user input
 	        break;
 
 	      default:
+	        // If unknown, switch to error
 	        enterErrorState();
  8000940:	f000 faa2 	bl	8000e88 <enterErrorState>
 	        break;
@@ -1041,17 +1062,18 @@ int main(void)
  800094e:	bf00      	nop
 	    }
 
-	    // 3. LED更新
+	    // 3. Update LED based on current state
 	    updateLED(g_systemState);
  8000950:	4b08      	ldr	r3, [pc, #32]	@ (8000974 <main+0x2ec>)
  8000952:	781b      	ldrb	r3, [r3, #0]
  8000954:	4618      	mov	r0, r3
  8000956:	f000 fab1 	bl	8000ebc <updateLED>
 
-	    // 4. 处理日志队列 => 发送到UART
+	    // 4. Process log buffer to send messages via UART
 	    processLogBuffer();
  800095a:	f000 fa77 	bl	8000e4c <processLogBuffer>
 
+	    // 5. Minimal delay for main loop
 	    HAL_Delay(10);
  800095e:	200a      	movs	r0, #10
  8000960:	f000 fd2c 	bl	80013bc <HAL_Delay>
@@ -1556,9 +1578,9 @@ static void MX_GPIO_Init(void)
  8000c64:	48000800 	.word	0x48000800
 
 08000c68 <HAL_GPIO_EXTI_Callback>:
-/* USER CODE BEGIN 4 */
-/**
-  * @brief EXTI 回调：识别短按/长按
+  *        Triggered when the user button on PC13 changes state.
+  *        This function uses debouncing and press duration measurement.
+  * @param GPIO_Pin Pin number that generated the EXTI interrupt
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -1567,15 +1589,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  8000c6c:	af00      	add	r7, sp, #0
  8000c6e:	4603      	mov	r3, r0
  8000c70:	80fb      	strh	r3, [r7, #6]
-  static uint32_t pressStartTime = 0;
-  static uint32_t lastInterruptTime = 0;
+  static uint32_t pressStartTime = 0;      // Records the timestamp when the button is pressed
+  static uint32_t lastInterruptTime = 0;   // Used for debouncing to ignore rapid signals
 
   if (GPIO_Pin == GPIO_PIN_13)
  8000c72:	88fb      	ldrh	r3, [r7, #6]
  8000c74:	f5b3 5f00 	cmp.w	r3, #8192	@ 0x2000
  8000c78:	d12b      	bne.n	8000cd2 <HAL_GPIO_EXTI_Callback+0x6a>
   {
-    uint32_t now = HAL_GetTick();
+    uint32_t now = HAL_GetTick();          // Current system time in milliseconds
  8000c7a:	f000 fb93 	bl	80013a4 <HAL_GetTick>
  8000c7e:	6178      	str	r0, [r7, #20]
     if ((now - lastInterruptTime) < DEBOUNCE_INTERVAL)
@@ -1585,7 +1607,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  8000c86:	1ad3      	subs	r3, r2, r3
  8000c88:	2b31      	cmp	r3, #49	@ 0x31
  8000c8a:	d921      	bls.n	8000cd0 <HAL_GPIO_EXTI_Callback+0x68>
-      return;
+      return;                              // Ignore if within debounce interval
     lastInterruptTime = now;
  8000c8c:	4a12      	ldr	r2, [pc, #72]	@ (8000cd8 <HAL_GPIO_EXTI_Callback+0x70>)
  8000c8e:	697b      	ldr	r3, [r7, #20]
@@ -1602,7 +1624,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  8000ca2:	2b00      	cmp	r3, #0
  8000ca4:	d103      	bne.n	8000cae <HAL_GPIO_EXTI_Callback+0x46>
     {
-      // 下降沿 => 按下
+      // Button is pressed down (falling edge if using rising trigger)
       pressStartTime = now;
  8000ca6:	4a0e      	ldr	r2, [pc, #56]	@ (8000ce0 <HAL_GPIO_EXTI_Callback+0x78>)
  8000ca8:	697b      	ldr	r3, [r7, #20]
@@ -1611,7 +1633,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
     else
     {
-      // 上升沿 => 松开
+      // Button is released (rising edge)
       uint32_t pressDuration = now - pressStartTime;
  8000cae:	4b0c      	ldr	r3, [pc, #48]	@ (8000ce0 <HAL_GPIO_EXTI_Callback+0x78>)
  8000cb0:	681b      	ldr	r3, [r3, #0]
@@ -1622,19 +1644,25 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  8000cb8:	68fb      	ldr	r3, [r7, #12]
  8000cba:	f5b3 6ffa 	cmp.w	r3, #2000	@ 0x7d0
  8000cbe:	d303      	bcc.n	8000cc8 <HAL_GPIO_EXTI_Callback+0x60>
+      {
+        // Classify as a long press
         g_pressEvent = PRESS_LONG;
  8000cc0:	4b08      	ldr	r3, [pc, #32]	@ (8000ce4 <HAL_GPIO_EXTI_Callback+0x7c>)
  8000cc2:	2202      	movs	r2, #2
  8000cc4:	701a      	strb	r2, [r3, #0]
  8000cc6:	e004      	b.n	8000cd2 <HAL_GPIO_EXTI_Callback+0x6a>
+      }
       else
+      {
+        // Classify as a short press
         g_pressEvent = PRESS_SHORT;
  8000cc8:	4b06      	ldr	r3, [pc, #24]	@ (8000ce4 <HAL_GPIO_EXTI_Callback+0x7c>)
  8000cca:	2201      	movs	r2, #1
  8000ccc:	701a      	strb	r2, [r3, #0]
  8000cce:	e000      	b.n	8000cd2 <HAL_GPIO_EXTI_Callback+0x6a>
-      return;
+      return;                              // Ignore if within debounce interval
  8000cd0:	bf00      	nop
+      }
     }
   }
 }
@@ -1647,23 +1675,25 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
  8000ce4:	20000178 	.word	0x20000178
 
 08000ce8 <RB_Init>:
-
-//=== 简易环形缓冲函数实现 ===
+  * @brief Initialize the ring buffer
+  *        Resets head and tail indices and clears the buffer.
+  * @param rb Pointer to the RingBuffer_t structure
+  */
 static void RB_Init(RingBuffer_t* rb)
 {
  8000ce8:	b580      	push	{r7, lr}
  8000cea:	b082      	sub	sp, #8
  8000cec:	af00      	add	r7, sp, #0
  8000cee:	6078      	str	r0, [r7, #4]
-    rb->head = 0;
+  rb->head = 0;
  8000cf0:	687b      	ldr	r3, [r7, #4]
  8000cf2:	2200      	movs	r2, #0
  8000cf4:	f8c3 2100 	str.w	r2, [r3, #256]	@ 0x100
-    rb->tail = 0;
+  rb->tail = 0;
  8000cf8:	687b      	ldr	r3, [r7, #4]
  8000cfa:	2200      	movs	r2, #0
  8000cfc:	f8c3 2104 	str.w	r2, [r3, #260]	@ 0x104
-    memset(rb->buffer, 0, LOG_BUF_SIZE);
+  memset(rb->buffer, 0, LOG_BUF_SIZE);
  8000d00:	687b      	ldr	r3, [r7, #4]
  8000d02:	f44f 7280 	mov.w	r2, #256	@ 0x100
  8000d06:	2100      	movs	r1, #0
@@ -1676,7 +1706,10 @@ static void RB_Init(RingBuffer_t* rb)
  8000d14:	bd80      	pop	{r7, pc}
 
 08000d16 <RB_Write>:
-
+  * @param data Pointer to the data to be written
+  * @param len Number of bytes to write
+  * @return The number of bytes successfully written
+  */
 static int RB_Write(RingBuffer_t* rb, const char* data, int len)
 {
  8000d16:	b480      	push	{r7}
@@ -1685,15 +1718,15 @@ static int RB_Write(RingBuffer_t* rb, const char* data, int len)
  8000d1c:	60f8      	str	r0, [r7, #12]
  8000d1e:	60b9      	str	r1, [r7, #8]
  8000d20:	607a      	str	r2, [r7, #4]
-    int count=0;
+  int count = 0;
  8000d22:	2300      	movs	r3, #0
  8000d24:	61fb      	str	r3, [r7, #28]
-    for(int i=0; i<len; i++)
+  for(int i = 0; i < len; i++)
  8000d26:	2300      	movs	r3, #0
  8000d28:	61bb      	str	r3, [r7, #24]
  8000d2a:	e022      	b.n	8000d72 <RB_Write+0x5c>
-    {
-        int nextHead = (rb->head+1) % LOG_BUF_SIZE;
+  {
+    int nextHead = (rb->head + 1) % LOG_BUF_SIZE;
  8000d2c:	68fb      	ldr	r3, [r7, #12]
  8000d2e:	f8d3 3100 	ldr.w	r3, [r3, #256]	@ 0x100
  8000d32:	3301      	adds	r3, #1
@@ -1703,16 +1736,16 @@ static int RB_Write(RingBuffer_t* rb, const char* data, int len)
  8000d3a:	bf58      	it	pl
  8000d3c:	4253      	negpl	r3, r2
  8000d3e:	617b      	str	r3, [r7, #20]
-        // 队列满, 丢弃剩余数据
-        if(nextHead == rb->tail)
+    // If nextHead equals tail, it means the buffer is full
+    if(nextHead == rb->tail)
  8000d40:	68fb      	ldr	r3, [r7, #12]
  8000d42:	f8d3 3104 	ldr.w	r3, [r3, #260]	@ 0x104
  8000d46:	697a      	ldr	r2, [r7, #20]
  8000d48:	429a      	cmp	r2, r3
  8000d4a:	d017      	beq.n	8000d7c <RB_Write+0x66>
-            break; // 这里简单丢弃
+      break;
 
-        rb->buffer[rb->head] = data[i];
+    rb->buffer[rb->head] = data[i];
  8000d4c:	69bb      	ldr	r3, [r7, #24]
  8000d4e:	68ba      	ldr	r2, [r7, #8]
  8000d50:	441a      	add	r2, r3
@@ -1721,15 +1754,15 @@ static int RB_Write(RingBuffer_t* rb, const char* data, int len)
  8000d58:	7811      	ldrb	r1, [r2, #0]
  8000d5a:	68fa      	ldr	r2, [r7, #12]
  8000d5c:	54d1      	strb	r1, [r2, r3]
-        rb->head = nextHead;
+    rb->head = nextHead;
  8000d5e:	68fb      	ldr	r3, [r7, #12]
  8000d60:	697a      	ldr	r2, [r7, #20]
  8000d62:	f8c3 2100 	str.w	r2, [r3, #256]	@ 0x100
-        count++;
+    count++;
  8000d66:	69fb      	ldr	r3, [r7, #28]
  8000d68:	3301      	adds	r3, #1
  8000d6a:	61fb      	str	r3, [r7, #28]
-    for(int i=0; i<len; i++)
+  for(int i = 0; i < len; i++)
  8000d6c:	69bb      	ldr	r3, [r7, #24]
  8000d6e:	3301      	adds	r3, #1
  8000d70:	61bb      	str	r3, [r7, #24]
@@ -1738,10 +1771,10 @@ static int RB_Write(RingBuffer_t* rb, const char* data, int len)
  8000d76:	429a      	cmp	r2, r3
  8000d78:	dbd8      	blt.n	8000d2c <RB_Write+0x16>
  8000d7a:	e000      	b.n	8000d7e <RB_Write+0x68>
-            break; // 这里简单丢弃
+      break;
  8000d7c:	bf00      	nop
-    }
-    return count;
+  }
+  return count;
  8000d7e:	69fb      	ldr	r3, [r7, #28]
 }
  8000d80:	4618      	mov	r0, r3
@@ -1751,7 +1784,10 @@ static int RB_Write(RingBuffer_t* rb, const char* data, int len)
  8000d8a:	4770      	bx	lr
 
 08000d8c <RB_Read>:
-
+  * @param out Pointer to the output buffer
+  * @param maxlen Maximum number of bytes to read (including null terminator)
+  * @return The number of bytes read (not counting the null terminator)
+  */
 static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
 {
  8000d8c:	b480      	push	{r7}
@@ -1760,13 +1796,13 @@ static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
  8000d92:	60f8      	str	r0, [r7, #12]
  8000d94:	60b9      	str	r1, [r7, #8]
  8000d96:	607a      	str	r2, [r7, #4]
-    int count=0;
+  int count = 0;
  8000d98:	2300      	movs	r3, #0
  8000d9a:	617b      	str	r3, [r7, #20]
-    while(rb->tail != rb->head && count<(maxlen-1))
+  while(rb->tail != rb->head && count < (maxlen - 1))
  8000d9c:	e017      	b.n	8000dce <RB_Read+0x42>
-    {
-        out[count] = rb->buffer[rb->tail];
+  {
+    out[count] = rb->buffer[rb->tail];
  8000d9e:	68fb      	ldr	r3, [r7, #12]
  8000da0:	f8d3 2104 	ldr.w	r2, [r3, #260]	@ 0x104
  8000da4:	697b      	ldr	r3, [r7, #20]
@@ -1775,7 +1811,7 @@ static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
  8000daa:	68f9      	ldr	r1, [r7, #12]
  8000dac:	5c8a      	ldrb	r2, [r1, r2]
  8000dae:	701a      	strb	r2, [r3, #0]
-        rb->tail = (rb->tail+1) % LOG_BUF_SIZE;
+    rb->tail = (rb->tail + 1) % LOG_BUF_SIZE;
  8000db0:	68fb      	ldr	r3, [r7, #12]
  8000db2:	f8d3 3104 	ldr.w	r3, [r3, #260]	@ 0x104
  8000db6:	3301      	adds	r3, #1
@@ -1786,11 +1822,11 @@ static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
  8000dc0:	4253      	negpl	r3, r2
  8000dc2:	68fa      	ldr	r2, [r7, #12]
  8000dc4:	f8c2 3104 	str.w	r3, [r2, #260]	@ 0x104
-        count++;
+    count++;
  8000dc8:	697b      	ldr	r3, [r7, #20]
  8000dca:	3301      	adds	r3, #1
  8000dcc:	617b      	str	r3, [r7, #20]
-    while(rb->tail != rb->head && count<(maxlen-1))
+  while(rb->tail != rb->head && count < (maxlen - 1))
  8000dce:	68fb      	ldr	r3, [r7, #12]
  8000dd0:	f8d3 2104 	ldr.w	r2, [r3, #260]	@ 0x104
  8000dd4:	68fb      	ldr	r3, [r7, #12]
@@ -1802,14 +1838,14 @@ static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
  8000de2:	697a      	ldr	r2, [r7, #20]
  8000de4:	429a      	cmp	r2, r3
  8000de6:	dbda      	blt.n	8000d9e <RB_Read+0x12>
-    }
-    out[count] = '\0';
+  }
+  out[count] = '\0';  // Null-terminate
  8000de8:	697b      	ldr	r3, [r7, #20]
  8000dea:	68ba      	ldr	r2, [r7, #8]
  8000dec:	4413      	add	r3, r2
  8000dee:	2200      	movs	r2, #0
  8000df0:	701a      	strb	r2, [r3, #0]
-    return count;
+  return count;
  8000df2:	697b      	ldr	r3, [r7, #20]
 }
  8000df4:	4618      	mov	r0, r3
@@ -1819,29 +1855,30 @@ static int RB_Read(RingBuffer_t* rb, char* out, int maxlen)
  8000dfe:	4770      	bx	lr
 
 08000e00 <logPrintf>:
-
-//=== 将可变参数字符串写入环形缓冲 (防止高频日志溢出) ===
+  *        Formats a string and writes it to the ring buffer.
+  * @param fmt Format string
+  * @param ... Variable arguments
+  */
 static void logPrintf(const char* fmt, ...)
 {
  8000e00:	b40f      	push	{r0, r1, r2, r3}
  8000e02:	b580      	push	{r7, lr}
  8000e04:	b0a2      	sub	sp, #136	@ 0x88
  8000e06:	af00      	add	r7, sp, #0
-    char tmp[128];
-    va_list ap;
-    va_start(ap, fmt);
+  char tmp[128];
+  va_list ap;
+  va_start(ap, fmt);
  8000e08:	f107 0394 	add.w	r3, r7, #148	@ 0x94
  8000e0c:	607b      	str	r3, [r7, #4]
-    vsnprintf(tmp, sizeof(tmp), fmt, ap);
+  vsnprintf(tmp, sizeof(tmp), fmt, ap);
  8000e0e:	f107 0008 	add.w	r0, r7, #8
  8000e12:	687b      	ldr	r3, [r7, #4]
  8000e14:	f8d7 2090 	ldr.w	r2, [r7, #144]	@ 0x90
  8000e18:	2180      	movs	r1, #128	@ 0x80
  8000e1a:	f004 f931 	bl	8005080 <vsniprintf>
-    va_end(ap);
+  va_end(ap);
 
-    // 写入环形缓冲
-    RB_Write(&g_logRB, tmp, strlen(tmp));
+  RB_Write(&g_logRB, tmp, strlen(tmp));
  8000e1e:	f107 0308 	add.w	r3, r7, #8
  8000e22:	4618      	mov	r0, r3
  8000e24:	f7ff f9d4 	bl	80001d0 <strlen>
@@ -1862,34 +1899,36 @@ static void logPrintf(const char* fmt, ...)
  8000e48:	20000180 	.word	0x20000180
 
 08000e4c <processLogBuffer>:
-
-//=== 从环形缓冲中取数据并发送UART ===
+/**
+  * @brief Transmit ring buffer contents via UART
+  *        Reads from the buffer and sends to huart2.
+  */
 static void processLogBuffer(void)
 {
  8000e4c:	b580      	push	{r7, lr}
  8000e4e:	b092      	sub	sp, #72	@ 0x48
  8000e50:	af00      	add	r7, sp, #0
-    char out[64];
-    int readCount = RB_Read(&g_logRB, out, sizeof(out));
+  char out[64];
+  int readCount = RB_Read(&g_logRB, out, sizeof(out));
  8000e52:	1d3b      	adds	r3, r7, #4
  8000e54:	2240      	movs	r2, #64	@ 0x40
  8000e56:	4619      	mov	r1, r3
  8000e58:	4809      	ldr	r0, [pc, #36]	@ (8000e80 <processLogBuffer+0x34>)
  8000e5a:	f7ff ff97 	bl	8000d8c <RB_Read>
  8000e5e:	6478      	str	r0, [r7, #68]	@ 0x44
-    if(readCount>0)
+  if(readCount > 0)
  8000e60:	6c7b      	ldr	r3, [r7, #68]	@ 0x44
  8000e62:	2b00      	cmp	r3, #0
  8000e64:	dd07      	ble.n	8000e76 <processLogBuffer+0x2a>
-    {
-        HAL_UART_Transmit(&huart2, (uint8_t*)out, readCount, HAL_MAX_DELAY);
+  {
+    HAL_UART_Transmit(&huart2, (uint8_t*)out, readCount, HAL_MAX_DELAY);
  8000e66:	6c7b      	ldr	r3, [r7, #68]	@ 0x44
  8000e68:	b29a      	uxth	r2, r3
  8000e6a:	1d39      	adds	r1, r7, #4
  8000e6c:	f04f 33ff 	mov.w	r3, #4294967295	@ 0xffffffff
  8000e70:	4804      	ldr	r0, [pc, #16]	@ (8000e84 <processLogBuffer+0x38>)
  8000e72:	f003 fb5b 	bl	800452c <HAL_UART_Transmit>
-    }
+  }
 }
  8000e76:	bf00      	nop
  8000e78:	3748      	adds	r7, #72	@ 0x48
@@ -1900,9 +1939,9 @@ static void processLogBuffer(void)
  8000e84:	200000f0 	.word	0x200000f0
 
 08000e88 <enterErrorState>:
-
-/**
-  * @brief 切换到ERROR状态
+  * @brief Enter error state
+  *        Switches system state to STATE_ERROR, logs an error message,
+  *        and disables RED/IR LEDs.
   */
 static void enterErrorState(void)
 {
@@ -1916,7 +1955,7 @@ static void enterErrorState(void)
  8000e92:	4809      	ldr	r0, [pc, #36]	@ (8000eb8 <enterErrorState+0x30>)
  8000e94:	f7ff ffb4 	bl	8000e00 <logPrintf>
 
-  // 关灯
+  // Disable both RED and IR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
  8000e98:	2201      	movs	r2, #1
  8000e9a:	2101      	movs	r1, #1
@@ -1934,9 +1973,9 @@ static void enterErrorState(void)
  8000eb8:	08005bf8 	.word	0x08005bf8
 
 08000ebc <updateLED>:
-
-/**
-  * @brief 根据当前状态让板载LED闪烁或常亮/熄灭
+  * @brief Update onboard LED (PA5) based on the current system state
+  *        Provides different blink intervals or constant states.
+  * @param state Current system state
   */
 static void updateLED(SystemState_t state)
 {
@@ -1968,37 +2007,37 @@ static void updateLED(SystemState_t state)
  8000ef0:	08000f19 	.word	0x08000f19
   {
     case STATE_INIT:
-      blinkInterval = 0;         // 灭
+      blinkInterval = 0;         // LED off
  8000ef4:	2300      	movs	r3, #0
  8000ef6:	60fb      	str	r3, [r7, #12]
       break;
  8000ef8:	e014      	b.n	8000f24 <updateLED+0x68>
     case STATE_WORKMODE_SELECT:
-      blinkInterval = 500;       // 慢闪
+      blinkInterval = 500;       // Slow blink
  8000efa:	f44f 73fa 	mov.w	r3, #500	@ 0x1f4
  8000efe:	60fb      	str	r3, [r7, #12]
       break;
  8000f00:	e010      	b.n	8000f24 <updateLED+0x68>
     case STATE_PREPROCESS_SELECT:
-      blinkInterval = 300;       // 中闪
+      blinkInterval = 300;       // Medium blink
  8000f02:	f44f 7396 	mov.w	r3, #300	@ 0x12c
  8000f06:	60fb      	str	r3, [r7, #12]
       break;
  8000f08:	e00c      	b.n	8000f24 <updateLED+0x68>
     case STATE_ADVANCED_SELECT:
-      blinkInterval = 200;       // 快闪
+      blinkInterval = 200;       // Fast blink
  8000f0a:	23c8      	movs	r3, #200	@ 0xc8
  8000f0c:	60fb      	str	r3, [r7, #12]
       break;
  8000f0e:	e009      	b.n	8000f24 <updateLED+0x68>
     case STATE_RUNNING:
-      blinkInterval = 0xFFFFFFFF;// 常亮
+      blinkInterval = 0xFFFFFFFF;// Always on
  8000f10:	f04f 33ff 	mov.w	r3, #4294967295	@ 0xffffffff
  8000f14:	60fb      	str	r3, [r7, #12]
       break;
  8000f16:	e005      	b.n	8000f24 <updateLED+0x68>
     case STATE_ERROR:
-      blinkInterval = 100;       // 超快闪
+      blinkInterval = 100;       // Very fast blink
  8000f18:	2364      	movs	r3, #100	@ 0x64
  8000f1a:	60fb      	str	r3, [r7, #12]
       break;
@@ -2016,6 +2055,7 @@ static void updateLED(SystemState_t state)
  8000f26:	2b00      	cmp	r3, #0
  8000f28:	d109      	bne.n	8000f3e <updateLED+0x82>
   {
+    // Keep LED off
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
  8000f2a:	2201      	movs	r2, #1
  8000f2c:	2120      	movs	r1, #32
@@ -2026,7 +2066,7 @@ static void updateLED(SystemState_t state)
  8000f38:	2201      	movs	r2, #1
  8000f3a:	701a      	strb	r2, [r3, #0]
       lastToggleTime = now;
-      ledState = (ledState==GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+      ledState = (ledState == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
       HAL_GPIO_WritePin(LED_PORT, LED_PIN, ledState);
     }
   }
@@ -2059,7 +2099,7 @@ static void updateLED(SystemState_t state)
  8000f68:	4a0d      	ldr	r2, [pc, #52]	@ (8000fa0 <updateLED+0xe4>)
  8000f6a:	68bb      	ldr	r3, [r7, #8]
  8000f6c:	6013      	str	r3, [r2, #0]
-      ledState = (ledState==GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+      ledState = (ledState == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
  8000f6e:	4b0b      	ldr	r3, [pc, #44]	@ (8000f9c <updateLED+0xe0>)
  8000f70:	781b      	ldrb	r3, [r3, #0]
  8000f72:	2b01      	cmp	r3, #1
@@ -2204,14 +2244,14 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
     PeriphClkInit.AdcClockSelection = RCC_ADCCLKSOURCE_PLLSAI1;
  800102e:	f04f 5380 	mov.w	r3, #268435456	@ 0x10000000
  8001032:	f8c7 308c 	str.w	r3, [r7, #140]	@ 0x8c
-    PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_HSI;
- 8001036:	2302      	movs	r3, #2
+    PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
+ 8001036:	2301      	movs	r3, #1
  8001038:	61bb      	str	r3, [r7, #24]
     PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
  800103a:	2301      	movs	r3, #1
  800103c:	61fb      	str	r3, [r7, #28]
-    PeriphClkInit.PLLSAI1.PLLSAI1N = 8;
- 800103e:	2308      	movs	r3, #8
+    PeriphClkInit.PLLSAI1.PLLSAI1N = 16;
+ 800103e:	2310      	movs	r3, #16
  8001040:	623b      	str	r3, [r7, #32]
     PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
  8001042:	2307      	movs	r3, #7
