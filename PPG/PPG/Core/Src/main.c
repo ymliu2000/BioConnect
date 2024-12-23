@@ -32,11 +32,12 @@
   */
 typedef enum
 {
-    STATE_INIT = 0,        // 开机初始状态
-    STATE_ADVANCED_SELECT, // 高级处理选择：心率 or 血氧
-    STATE_WORKMODE_SELECT, // 工作模式选择：RED or IR
-    STATE_RUNNING,         // 正常采集并处理
-    STATE_ERROR            // 错误状态
+    STATE_INIT = 0,          // 开机初始状态
+    STATE_WORKMODE_SELECT,   // 工作模式选择：RED or IR
+    STATE_PREPROCESS_SELECT, // 预处理模式选择：Squaring Filter or EMA
+    STATE_ADVANCED_SELECT,   // 高级处理模式选择：心率 or 血氧
+    STATE_RUNNING,           // 正常采集并处理
+    STATE_ERROR              // 错误状态
 } SystemState_t;
 
 /**
@@ -66,11 +67,21 @@ typedef enum
     MODE_RED = 0,
     MODE_IR
 } WorkMode_t;
+
+/**
+  * @brief 预处理模式：Squaring Filter / Exponential Moving Average
+  */
+typedef enum
+{
+    PREPROC_SF = 0,   // Squaring Filter
+    PREPROC_EMA       // Exponential Moving Average
+} PreProcessType_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LONG_PRESS_THRESHOLD   1000  // 长按阈值 (1秒)
+// 将长按阈值改为 2 秒 (2000 ms)
+#define LONG_PRESS_THRESHOLD   2000
 #define DEBOUNCE_INTERVAL      50    // 去抖间隔 (ms)
 /* USER CODE END PD */
 
@@ -89,23 +100,67 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 // 状态机全局变量
-volatile PressType_t g_pressEvent = PRESS_NONE;     // 本次“短按/长按”事件 (在主循环中处理后清空)
-SystemState_t g_systemState = STATE_INIT;           // 系统当前状态
-MeasureType_t g_measureType = MEASURE_HR;           // 默认测量类型 (心率)
-WorkMode_t g_workMode = MODE_RED;                   // 默认工作模式 (红光)
+volatile PressType_t g_pressEvent = PRESS_NONE;   // “短按/长按”事件 (在主循环中读取并清空)
+SystemState_t g_systemState = STATE_INIT;         // 当前状态
 
-// 这里演示用，实际项目中可能更复杂
-// 例如一个滤波器、峰值检测或FFT等
-static uint16_t computeHeartRate(uint32_t adcValue)
+MeasureType_t g_measureType = MEASURE_HR;         // 高级处理：默认心率
+WorkMode_t g_workMode = MODE_RED;                 // 工作模式：默认红光
+PreProcessType_t g_preprocType = PREPROC_SF;      // 预处理：默认 Squaring Filter
+
+/* =============== 示例算法区域 =============== */
+
+/**
+  * @brief  用于演示的“Squaring Filter”预处理
+  * @param  input 原始ADC采样值
+  * @retval 处理后的值
+  */
+static uint32_t applySquaringFilter(uint32_t input)
 {
-    // 简单映射：HR = 60 + (ADC值 mod 40)
-    return 60 + (adcValue % 40);
+    // 演示：简单地做一次 (input^2) 并防止溢出
+    // 实际项目可能需要在浮点数或更大范围处理
+    uint64_t squared = (uint64_t)input * (uint64_t)input;
+    // 做一个简单的截断，防止出现过大数
+    if (squared > 0xFFFFFFFF)
+        squared = 0xFFFFFFFF;
+    return (uint32_t)squared;
 }
 
-static uint8_t computeSpO2(uint32_t adcValue)
+/**
+  * @brief  用于演示的“Exponential Moving Average”预处理
+  * @param  input 当前ADC采样值
+  * @retval EMA后的值
+  */
+static uint32_t applyExponentialMovingAverage(uint32_t input)
 {
-    // 简单映射：SpO2 = 95 + (ADC值 mod 5)
-    return 95 + (adcValue % 5);
+    // 这里的 alpha = 0.1 仅作演示
+    // 通常会保留上次的 EMA 值
+    static float emaVal = 0.0f;
+    float alpha = 0.1f;
+
+    emaVal = alpha * (float)input + (1.0f - alpha) * emaVal;
+    return (uint32_t)emaVal;
+}
+
+/**
+  * @brief  用于演示的“心率”计算
+  * @param  value 预处理后的采样值
+  * @retval 心率值 (bpm)
+  */
+static uint16_t computeHeartRate(uint32_t value)
+{
+    // 简单映射：HR = 60 + (value mod 40)
+    return 60 + (value % 40);
+}
+
+/**
+  * @brief  用于演示的“血氧”计算
+  * @param  value 预处理后的采样值
+  * @retval 血氧饱和度 (%)
+  */
+static uint8_t computeSpO2(uint32_t value)
+{
+    // 简单映射：SpO2 = 95 + (value mod 5)
+    return 95 + (value % 5);
 }
 /* USER CODE END PV */
 
@@ -164,6 +219,8 @@ int main(void)
   // 上电后，默认关闭红光和IR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -181,8 +238,48 @@ int main(void)
 	      switch (g_systemState)
 	      {
 	        case STATE_INIT:
-	          // 在 INIT 下，仅识别长按 => 进入 ADVANCED_SELECT
+	          // INIT 下，仅识别长按 => 进入 WORKMODE_SELECT
 	          if (currentPress == PRESS_LONG)
+	          {
+	            g_systemState = STATE_WORKMODE_SELECT;
+	            sprintf(msg, "System -> WORKMODE_SELECT\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          break;
+
+	        case STATE_WORKMODE_SELECT:
+	          // 短按 => 在RED和IR之间切换
+	          // 长按 => 进入PREPROCESS_SELECT
+	          if (currentPress == PRESS_SHORT)
+	          {
+	            g_workMode = (g_workMode == MODE_RED) ? MODE_IR : MODE_RED;
+	            if (g_workMode == MODE_RED)
+	              sprintf(msg, "Selected WorkMode: RED\r\n");
+	            else
+	              sprintf(msg, "Selected WorkMode: IR\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          else if (currentPress == PRESS_LONG)
+	          {
+	            g_systemState = STATE_PREPROCESS_SELECT;
+	            sprintf(msg, "System -> PREPROCESS_SELECT\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          break;
+
+	        case STATE_PREPROCESS_SELECT:
+	          // 短按 => SF / EMA 切换
+	          // 长按 => 进入ADVANCED_SELECT
+	          if (currentPress == PRESS_SHORT)
+	          {
+	            g_preprocType = (g_preprocType == PREPROC_SF) ? PREPROC_EMA : PREPROC_SF;
+	            if (g_preprocType == PREPROC_SF)
+	              sprintf(msg, "Selected PreProcessing: Squaring Filter\r\n");
+	            else
+	              sprintf(msg, "Selected PreProcessing: Exponential Moving Average\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_ADVANCED_SELECT;
 	            sprintf(msg, "System -> ADVANCED_SELECT\r\n");
@@ -191,47 +288,19 @@ int main(void)
 	          break;
 
 	        case STATE_ADVANCED_SELECT:
+	          // 短按 => 心率 / 血氧 切换
+	          // 长按 => RUNNING
 	          if (currentPress == PRESS_SHORT)
 	          {
-	            // 短按 => 在 心率 / 血氧 之间切换
 	            g_measureType = (g_measureType == MEASURE_HR) ? MEASURE_SPO2 : MEASURE_HR;
 	            if (g_measureType == MEASURE_HR)
-	            {
-	              sprintf(msg, "Selected: Heart Rate\r\n");
-	            }
+	              sprintf(msg, "Selected Advanced: Heart Rate\r\n");
 	            else
-	            {
-	              sprintf(msg, "Selected: SpO2\r\n");
-	            }
+	              sprintf(msg, "Selected Advanced: SpO2\r\n");
 	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
-	            // 长按 => 进入 WORKMODE_SELECT
-	            g_systemState = STATE_WORKMODE_SELECT;
-	            sprintf(msg, "System -> WORKMODE_SELECT\r\n");
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-	          }
-	          break;
-
-	        case STATE_WORKMODE_SELECT:
-	          if (currentPress == PRESS_SHORT)
-	          {
-	            // 短按 => 在 RED / IR 模式之间切换
-	            g_workMode = (g_workMode == MODE_RED) ? MODE_IR : MODE_RED;
-	            if (g_workMode == MODE_RED)
-	            {
-	              sprintf(msg, "Work Mode: RED\r\n");
-	            }
-	            else
-	            {
-	              sprintf(msg, "Work Mode: IR\r\n");
-	            }
-	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-	          }
-	          else if (currentPress == PRESS_LONG)
-	          {
-	            // 长按 => 进入 RUNNING
 	            g_systemState = STATE_RUNNING;
 	            sprintf(msg, "System -> RUNNING\r\n");
 	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
@@ -250,7 +319,7 @@ int main(void)
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	          }
-	          // 短按在 RUNNING 状态下此处不做任何处理
+	          // 短按在 RUNNING 暂不处理
 	          break;
 
 	        case STATE_ERROR:
@@ -268,7 +337,7 @@ int main(void)
 	          break;
 
 	        default:
-	          // 不期望进入的分支，进入 ERROR
+	          // 防御式处理 => ERROR
 	          enterErrorState();
 	          break;
 	      }
@@ -281,17 +350,21 @@ int main(void)
 	        // INIT: 不做采集
 	        break;
 
-	      case STATE_ADVANCED_SELECT:
-	        // 可在此进行提示或小动画，此处不做任何采集
+	      case STATE_WORKMODE_SELECT:
+	        // 不做采集，等待用户选择RED/IR
 	        break;
 
-	      case STATE_WORKMODE_SELECT:
-	        // 同上，仅选择工作模式，不做采集
+	      case STATE_PREPROCESS_SELECT:
+	        // 不做采集，等待用户选择SF/EMA
+	        break;
+
+	      case STATE_ADVANCED_SELECT:
+	        // 不做采集，等待用户选择HR/SpO2
 	        break;
 
 	      case STATE_RUNNING:
 	      {
-	        // 根据选择，打开对应LED
+	        // 先根据工作模式开关对应LED
 	        if (g_workMode == MODE_RED)
 	        {
 	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 打开红光(低电平有效)
@@ -309,30 +382,41 @@ int main(void)
 	        {
 	          adcValue = HAL_ADC_GetValue(&hadc1);
 
-	          // 根据测量类型，对 ADC 数据做不同的处理
-	          if (g_measureType == MEASURE_HR)
+	          // 先做预处理
+	          uint32_t preprocessedValue = adcValue;
+	          if (g_preprocType == PREPROC_SF)
 	          {
-	            uint16_t hrValue = computeHeartRate(adcValue);
-	            sprintf(msg, "ADC: %lu -> HR: %u bpm\r\n", adcValue, hrValue);
+	            preprocessedValue = applySquaringFilter(adcValue);
 	          }
 	          else
 	          {
-	            uint8_t spo2Value = computeSpO2(adcValue);
-	            sprintf(msg, "ADC: %lu -> SpO2: %u%%\r\n", adcValue, spo2Value);
+	            preprocessedValue = applyExponentialMovingAverage(adcValue);
 	          }
 
+	          // 再做高级处理
+	          if (g_measureType == MEASURE_HR)
+	          {
+	            uint16_t hrValue = computeHeartRate(preprocessedValue);
+	            sprintf(msg, "ADC:%lu ->Pre:%lu ->HR:%u bpm\r\n",
+	                    adcValue, preprocessedValue, hrValue);
+	          }
+	          else
+	          {
+	            uint8_t spo2Value = computeSpO2(preprocessedValue);
+	            sprintf(msg, "ADC:%lu ->Pre:%lu ->SpO2:%u%%\r\n",
+	                    adcValue, preprocessedValue, spo2Value);
+	          }
 	          HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 	        }
 	        break;
 	      }
 
 	      case STATE_ERROR:
-	        // ERROR: 不断闪烁LED或等待用户长按恢复
-	        // 此处仅等待用户长按来回到INIT，不做其他操作
+	        // 可让LED闪烁，或等待用户长按恢复
 	        break;
 
 	      default:
-	        // 防御式处理：进入 ERROR
+	        // 防御式处理 => ERROR
 	        enterErrorState();
 	        break;
 	    }
@@ -555,6 +639,11 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/**
+  * @brief EXTI 回调函数：用于识别短按 / 长按
+  *        - 下降沿: 按下
+  *        - 上升沿: 松开 => 根据按下时长判断是短按 or 长按
+  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   static uint32_t pressStartTime = 0;
@@ -569,7 +658,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       return;
     lastInterruptTime = now;
 
-    // 判断当前引脚电平
+    // 读取当前引脚电平
     GPIO_PinState pinState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
     if (pinState == GPIO_PIN_RESET)
@@ -594,7 +683,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 }
 
 /**
-  * @brief 将系统切换到 ERROR 状态
+  * @brief 切换到ERROR状态
   */
 static void enterErrorState(void)
 {
