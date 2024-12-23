@@ -27,9 +27,12 @@
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
-// 全局变量
-volatile uint8_t buttonPressed = 0;
-uint8_t systemState = 0; // 0: IDLE, 1: RED_ACTIVE, 2: IR_ACTIVE
+typedef enum
+{
+    STATE_IDLE = 0,
+    STATE_RED_ACTIVE,
+    STATE_IR_ACTIVE
+} SystemState_t;
 
 /* USER CODE END PTD */
 
@@ -52,7 +55,9 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-
+// 全局变量（注意：按钮事件及状态）
+volatile uint8_t buttonPressed = 0;
+SystemState_t systemState = STATE_IDLE; // 初始状态设为IDLE
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,7 +83,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	  char msg[50];
+	  uint32_t adcValue = 0;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -103,8 +109,8 @@ int main(void)
   MX_ADC1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  char msg[50];
-  uint32_t adcValue;
+  sprintf(msg, "System Started. Current State: IDLE\r\n");
+  HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -112,48 +118,72 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-      if (buttonPressed)
-      {
-          buttonPressed = 0;
+	    /* ========== 【1】状态转移：检测按钮是否被按下 ========== */
+	    if (buttonPressed)
+	    {
+	      buttonPressed = 0; // 清除按键标志
 
-          if (systemState == 0) // IDLE -> RED_ACTIVE
-          {
-              systemState = 1;
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 启动红光
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
-              sprintf(msg, "System in RED_ACTIVE state.\r\n");
-              HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-          }
-          else if (systemState == 1) // RED_ACTIVE -> IR_ACTIVE
-          {
-              systemState = 2;
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // 启动IR
-              sprintf(msg, "System in IR_ACTIVE state.\r\n");
-              HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-          }
-          else if (systemState == 2) // IR_ACTIVE -> IDLE
-          {
-              systemState = 0;
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
-              sprintf(msg, "System in IDLE state.\r\n");
-              HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-          }
-      }
+	      switch (systemState)
+	      {
+	        case STATE_IDLE:
+	          // IDLE -> RED_ACTIVE
+	          systemState = STATE_RED_ACTIVE;
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 启动红光(低电平有效)
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
+	          sprintf(msg, "System -> RED_ACTIVE\r\n");
+	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	          break;
 
-      if (systemState == 1 || systemState == 2) // RED_ACTIVE 或 IR_ACTIVE
-      {
-          HAL_ADC_Start(&hadc1);
-          if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
-          {
-              adcValue = HAL_ADC_GetValue(&hadc1);
-              sprintf(msg, "ADC Data: %lu\r\n", adcValue);
-              HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-          }
-      }
+	        case STATE_RED_ACTIVE:
+	          // RED_ACTIVE -> IR_ACTIVE
+	          systemState = STATE_IR_ACTIVE;
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // 启动IR
+	          sprintf(msg, "System -> IR_ACTIVE\r\n");
+	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	          break;
 
-      HAL_Delay(10); // 防止高频循环占用资源
+	        case STATE_IR_ACTIVE:
+	          // IR_ACTIVE -> IDLE
+	          systemState = STATE_IDLE;
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
+	          sprintf(msg, "System -> IDLE\r\n");
+	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	          break;
+
+	        default:
+	          // 理论上不会进入这里，防御式处理
+	          systemState = STATE_IDLE;
+	          break;
+	      }
+	    }
+
+	    /* ========== 【2】状态行为：根据当前状态执行相应任务 ========== */
+	    switch (systemState)
+	    {
+	      case STATE_IDLE:
+	        // 空闲态，不进行ADC读取
+	        break;
+
+	      case STATE_RED_ACTIVE:
+	      case STATE_IR_ACTIVE:
+	        // 不论是红光还是IR激活，都进行一次ADC读取
+	        HAL_ADC_Start(&hadc1);
+	        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+	        {
+	          adcValue = HAL_ADC_GetValue(&hadc1);
+	          sprintf(msg, "ADC Data: %lu\r\n", adcValue);
+	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	        }
+	        break;
+
+	      default:
+	        // 防御式处理，默认不做任何事
+	        break;
+	    }
+
+	    HAL_Delay(10); // 微小延时，防止主循环过于频繁
   }
   /* USER CODE END 3 */
 }
@@ -371,20 +401,25 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+/**
+  * @brief  EXTI line detection callbacks.
+  * @param  GPIO_Pin Specifies the pins connected EXTI line.
+  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    static uint32_t lastInterruptTime = 0;
-    uint32_t currentTime = HAL_GetTick();
+  static uint32_t lastInterruptTime = 0;
+  uint32_t currentTime = HAL_GetTick();
 
-    if (GPIO_Pin == GPIO_PIN_13) // 检测按钮引脚
-    {
-        if (currentTime - lastInterruptTime < 200) // 去抖动：200ms
-            return;
-        lastInterruptTime = currentTime;
+  if (GPIO_Pin == GPIO_PIN_13)
+  {
+    // 简单去抖动：若当前按下与上次中断间隔<200ms，则忽略
+    if ((currentTime - lastInterruptTime) < 200)
+      return;
+    lastInterruptTime = currentTime;
 
-        buttonPressed = 1; // 标记按钮按下事件
-    }
+    // 标记按钮已按下，让主循环里进行状态切换
+    buttonPressed = 1;
+  }
 }
 /* USER CODE END 4 */
 
