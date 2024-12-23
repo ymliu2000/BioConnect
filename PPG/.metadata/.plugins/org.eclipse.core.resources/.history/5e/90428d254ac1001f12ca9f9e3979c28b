@@ -246,7 +246,7 @@ int main(void)
   RB_Init(&g_logRB);
 
   // 打印启动消息
-  logPrintf("System Started.\r\nCurrent State: INIT\r\n");
+  logPrintf("System Started. Current State: INIT\r\n");
 
   // 默认关闭红光和IR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
@@ -269,7 +269,7 @@ int main(void)
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_WORKMODE_SELECT;
-	            logPrintf("Current State: WORKMODE_SELECT\r\n");
+	            logPrintf("System -> WORKMODE_SELECT\r\n");
 	          }
 	          break;
 
@@ -285,7 +285,7 @@ int main(void)
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_PREPROCESS_SELECT;
-	            logPrintf("Current State: PREPROCESS_SELECT\r\n");
+	            logPrintf("System -> PREPROCESS_SELECT\r\n");
 	          }
 	          break;
 
@@ -294,14 +294,14 @@ int main(void)
 	          {
 	            g_preprocType = (g_preprocType==PREPROC_SF)? PREPROC_EMA: PREPROC_SF;
 	            if (g_preprocType == PREPROC_SF)
-	              logPrintf("Selected PreProcessing Algorithm: Squaring Filter\r\n");
+	              logPrintf("Selected PreProcessing: Squaring Filter\r\n");
 	            else
-	              logPrintf("Selected PreProcessing Algorithm: ExponentialMovingAverage\r\n");
+	              logPrintf("Selected PreProcessing: ExponentialMovingAverage\r\n");
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_ADVANCED_SELECT;
-	            logPrintf("Current State: ADVANCED_SELECT\r\n");
+	            logPrintf("System -> ADVANCED_SELECT\r\n");
 	          }
 	          break;
 
@@ -310,14 +310,14 @@ int main(void)
 	          {
 	            g_measureType = (g_measureType==MEASURE_HR)? MEASURE_SPO2: MEASURE_HR;
 	            if (g_measureType == MEASURE_HR)
-	              logPrintf("Selected Advanced Processing Algorithm: Heart Rate\r\n");
+	              logPrintf("Selected Advanced: Heart Rate\r\n");
 	            else
-	              logPrintf("Selected Advanced Processing Algorithm: SpO2\r\n");
+	              logPrintf("Selected Advanced: SpO2\r\n");
 	          }
 	          else if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_RUNNING;
-	            logPrintf("Current State: RUNNING\r\n");
+	            logPrintf("System -> RUNNING\r\n");
 	          }
 	          break;
 
@@ -325,7 +325,7 @@ int main(void)
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_INIT;
-	            logPrintf("Current State: INIT\r\n");
+	            logPrintf("System -> INIT\r\n");
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	          }
@@ -335,7 +335,7 @@ int main(void)
 	          if (currentPress == PRESS_LONG)
 	          {
 	            g_systemState = STATE_INIT;
-	            logPrintf("Current State: INIT (from ERROR)\r\n");
+	            logPrintf("System -> INIT (from ERROR)\r\n");
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
 	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 	          }
@@ -387,12 +387,12 @@ int main(void)
 	          char line[80];
 	          if (g_measureType == MEASURE_HR)
 	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->HR:%lu bpm\r\n",
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->HR:%lu bpm     ",
 	                    adcValue, preVal, outVal);
 	          }
 	          else
 	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->SpO2:%lu%%\r\n",
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->SpO2:%lu%%     ",
 	                    adcValue, preVal, outVal);
 	          }
 	          logPrintf(line); // 写入环形缓冲

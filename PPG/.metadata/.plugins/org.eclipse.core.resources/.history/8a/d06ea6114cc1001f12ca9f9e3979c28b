@@ -387,12 +387,12 @@ int main(void)
 	          char line[80];
 	          if (g_measureType == MEASURE_HR)
 	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->HR:%lu bpm\r\n",
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->HR:%lu bpm     ",
 	                    adcValue, preVal, outVal);
 	          }
 	          else
 	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->SpO2:%lu%%\r\n",
+	            sprintf(line, "\rADC:%lu ->Pre:%lu ->SpO2:%lu%%     ",
 	                    adcValue, preVal, outVal);
 	          }
 	          logPrintf(line); // 写入环形缓冲

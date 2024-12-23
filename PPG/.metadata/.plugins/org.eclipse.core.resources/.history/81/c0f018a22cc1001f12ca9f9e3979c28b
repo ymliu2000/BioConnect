@@ -21,81 +21,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <string.h>
 #include <stdarg.h> //===修改=== 用于变参函数 (如 printf-style)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-/**
-  * @brief 系统状态机枚举
-  */
-typedef enum
-{
-    STATE_INIT = 0,          // 开机初始状态
-    STATE_WORKMODE_SELECT,   // 工作模式选择：RED or IR
-    STATE_PREPROCESS_SELECT, // 预处理模式选择：Squaring Filter or EMA
-    STATE_ADVANCED_SELECT,   // 高级处理模式选择：心率 or 血氧
-    STATE_RUNNING,           // 正常采集并处理
-    STATE_ERROR              // 错误状态
-} SystemState_t;
 
-/**
-  * @brief 按键事件：无按键、短按、长按
-  */
-typedef enum
-{
-    PRESS_NONE = 0,
-    PRESS_SHORT,
-    PRESS_LONG
-} PressType_t;
-
-/**
-  * @brief 测量类型：心率 / 血氧
-  */
-typedef enum
-{
-    MEASURE_HR = 0,  // 心率
-    MEASURE_SPO2     // 血氧
-} MeasureType_t;
-
-/**
-  * @brief 工作模式：RED / IR
-  */
-typedef enum
-{
-    MODE_RED = 0,
-    MODE_IR
-} WorkMode_t;
-
-/**
-  * @brief 预处理模式：Squaring Filter / Exponential Moving Average
-  */
-typedef enum
-{
-    PREPROC_SF = 0,   // Squaring Filter
-    PREPROC_EMA       // Exponential Moving Average
-} PreProcessType_t;
-
-/*
- * ========== 函数指针类型定义 (去耦处理函数) =========
- */
-// 预处理：输入uint32_t原始ADC，输出uint32_t结果
-typedef uint32_t (*PreprocFunc_t)(uint32_t);
-// 高级处理：若为心率=>返回uint16_t，血氧=>返回uint8_t等，这里简化为返回uint32_t
-typedef uint32_t (*AdvancedFunc_t)(uint32_t);
-
-/**
-  * @brief 用于“防止内存溢出/队列满”示例：简易环形缓冲
-  */
-#define LOG_BUF_SIZE  256
-typedef struct
-{
-    char  buffer[LOG_BUF_SIZE];
-    int   head;
-    int   tail;
-} RingBuffer_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -246,11 +177,14 @@ int main(void)
   RB_Init(&g_logRB);
 
   // 打印启动消息
-  logPrintf("System Started.\r\nCurrent State: INIT\r\n");
+  logPrintf("System Started. Current State: INIT\r\n");
 
   // 默认关闭红光和IR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -258,164 +192,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	    // 1. 读取本次的按键事件
-	    PressType_t currentPress = g_pressEvent;
-	    if (currentPress != PRESS_NONE)
-	    {
-	      g_pressEvent = PRESS_NONE;
-	      switch (g_systemState)
-	      {
-	        case STATE_INIT:
-	          if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_WORKMODE_SELECT;
-	            logPrintf("Current State: WORKMODE_SELECT\r\n");
-	          }
-	          break;
 
-	        case STATE_WORKMODE_SELECT:
-	          if (currentPress == PRESS_SHORT)
-	          {
-	            g_workMode = (g_workMode == MODE_RED) ? MODE_IR : MODE_RED;
-	            if (g_workMode == MODE_RED)
-	              logPrintf("Selected WorkMode: RED\r\n");
-	            else
-	              logPrintf("Selected WorkMode: IR\r\n");
-	          }
-	          else if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_PREPROCESS_SELECT;
-	            logPrintf("Current State: PREPROCESS_SELECT\r\n");
-	          }
-	          break;
-
-	        case STATE_PREPROCESS_SELECT:
-	          if (currentPress == PRESS_SHORT)
-	          {
-	            g_preprocType = (g_preprocType==PREPROC_SF)? PREPROC_EMA: PREPROC_SF;
-	            if (g_preprocType == PREPROC_SF)
-	              logPrintf("Selected PreProcessing Algorithm: Squaring Filter\r\n");
-	            else
-	              logPrintf("Selected PreProcessing Algorithm: ExponentialMovingAverage\r\n");
-	          }
-	          else if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_ADVANCED_SELECT;
-	            logPrintf("Current State: ADVANCED_SELECT\r\n");
-	          }
-	          break;
-
-	        case STATE_ADVANCED_SELECT:
-	          if (currentPress == PRESS_SHORT)
-	          {
-	            g_measureType = (g_measureType==MEASURE_HR)? MEASURE_SPO2: MEASURE_HR;
-	            if (g_measureType == MEASURE_HR)
-	              logPrintf("Selected Advanced Processing Algorithm: Heart Rate\r\n");
-	            else
-	              logPrintf("Selected Advanced Processing Algorithm: SpO2\r\n");
-	          }
-	          else if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_RUNNING;
-	            logPrintf("Current State: RUNNING\r\n");
-	          }
-	          break;
-
-	        case STATE_RUNNING:
-	          if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_INIT;
-	            logPrintf("Current State: INIT\r\n");
-	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-	          }
-	          break;
-
-	        case STATE_ERROR:
-	          if (currentPress == PRESS_LONG)
-	          {
-	            g_systemState = STATE_INIT;
-	            logPrintf("Current State: INIT (from ERROR)\r\n");
-	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-	          }
-	          break;
-
-	        default:
-	          enterErrorState();
-	          break;
-	      }
-	    }
-
-	    // 2. 根据当前状态执行“状态行为”
-	    switch (g_systemState)
-	    {
-	      case STATE_INIT:
-	      case STATE_WORKMODE_SELECT:
-	      case STATE_PREPROCESS_SELECT:
-	      case STATE_ADVANCED_SELECT:
-	        // 不采集ADC
-	        break;
-
-	      case STATE_RUNNING:
-	      {
-	        // 根据模式点亮对应LED
-	        if (g_workMode == MODE_RED)
-	        {
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-	        }
-	        else
-	        {
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
-	        }
-
-	        // 原先的轮询采ADC
-	        HAL_ADC_Start(&hadc1);
-	        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
-	        {
-	          uint32_t adcValue = HAL_ADC_GetValue(&hadc1);
-
-	          //=== “解耦”处理：预处理 + 高级处理
-	          // 先调用预处理函数指针
-	          uint32_t preVal = g_preprocFuncs[g_preprocType](adcValue);
-	          // 再调用高级处理函数指针
-	          uint32_t outVal = g_advancedFuncs[g_measureType](preVal);
-
-	          // 打印 (在同一行覆盖)
-	          char line[80];
-	          if (g_measureType == MEASURE_HR)
-	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->HR:%lu bpm\r\n",
-	                    adcValue, preVal, outVal);
-	          }
-	          else
-	          {
-	            sprintf(line, "ADC:%lu ->Pre:%lu ->SpO2:%lu%%\r\n",
-	                    adcValue, preVal, outVal);
-	          }
-	          logPrintf(line); // 写入环形缓冲
-	        }
-	        break;
-	      }
-
-	      case STATE_ERROR:
-	        // 这里可以进行LED快速闪烁或等长按回到INIT
-	        break;
-
-	      default:
-	        enterErrorState();
-	        break;
-	    }
-
-	    // 3. LED更新
-	    updateLED(g_systemState);
-
-	    // 4. 处理日志队列 => 发送到UART
-	    processLogBuffer();
-
-	    HAL_Delay(10);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
