@@ -27,18 +27,51 @@
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+/**
+  * @brief 系统状态机枚举
+  */
 typedef enum
 {
-    STATE_IDLE = 0,
-    STATE_RED_ACTIVE,
-    STATE_IR_ACTIVE
+    STATE_INIT = 0,        // 开机初始状态
+    STATE_ADVANCED_SELECT, // 高级处理选择：心率 or 血氧
+    STATE_WORKMODE_SELECT, // 工作模式选择：RED or IR
+    STATE_RUNNING,         // 正常采集并处理
+    STATE_ERROR            // 错误状态
 } SystemState_t;
 
+/**
+  * @brief 按键事件：无按键、短按、长按
+  */
+typedef enum
+{
+    PRESS_NONE = 0,
+    PRESS_SHORT,
+    PRESS_LONG
+} PressType_t;
+
+/**
+  * @brief 测量类型：心率 / 血氧
+  */
+typedef enum
+{
+    MEASURE_HR = 0,  // 心率
+    MEASURE_SPO2     // 血氧
+} MeasureType_t;
+
+/**
+  * @brief 工作模式：RED / IR
+  */
+typedef enum
+{
+    MODE_RED = 0,
+    MODE_IR
+} WorkMode_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define LONG_PRESS_THRESHOLD   1000  // 长按阈值 (1秒)
+#define DEBOUNCE_INTERVAL      50    // 去抖间隔 (ms)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,9 +88,25 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-// 全局变量（注意：按钮事件及状态）
-volatile uint8_t buttonPressed = 0;
-SystemState_t systemState = STATE_IDLE; // 初始状态设为IDLE
+// 状态机全局变量
+volatile PressType_t g_pressEvent = PRESS_NONE;     // 本次“短按/长按”事件 (在主循环中处理后清空)
+SystemState_t g_systemState = STATE_INIT;           // 系统当前状态
+MeasureType_t g_measureType = MEASURE_HR;           // 默认测量类型 (心率)
+WorkMode_t g_workMode = MODE_RED;                   // 默认工作模式 (红光)
+
+// 这里演示用，实际项目中可能更复杂
+// 例如一个滤波器、峰值检测或FFT等
+static uint16_t computeHeartRate(uint32_t adcValue)
+{
+    // 简单映射：HR = 60 + (ADC值 mod 40)
+    return 60 + (adcValue % 40);
+}
+
+static uint8_t computeSpO2(uint32_t adcValue)
+{
+    // 简单映射：SpO2 = 95 + (ADC值 mod 5)
+    return 95 + (adcValue % 5);
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,7 +116,7 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void enterErrorState(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -83,7 +132,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	  char msg[50];
+	  char msg[100];
 	  uint32_t adcValue = 0;
   /* USER CODE END 1 */
 
@@ -109,81 +158,186 @@ int main(void)
   MX_ADC1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  sprintf(msg, "System Started. Current State: IDLE\r\n");
-  HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+  sprintf(msg, "System Started. Current State: INIT\r\n");
+  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+  // 上电后，默认关闭红光和IR
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	    /* ========== 【1】状态转移：检测按钮是否被按下 ========== */
-	    if (buttonPressed)
+	    // 1. 读取本次的按键事件
+	    PressType_t currentPress = g_pressEvent;
+	    if (currentPress != PRESS_NONE)
 	    {
-	      buttonPressed = 0; // 清除按键标志
+	      // 读取到后，马上清除，避免重复触发
+	      g_pressEvent = PRESS_NONE;
 
-	      switch (systemState)
+	      // 根据当前系统状态和按键类型，做状态转移或动作
+	      switch (g_systemState)
 	      {
-	        case STATE_IDLE:
-	          // IDLE -> RED_ACTIVE
-	          systemState = STATE_RED_ACTIVE;
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 启动红光(低电平有效)
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
-	          sprintf(msg, "System -> RED_ACTIVE\r\n");
-	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	        case STATE_INIT:
+	          // 在 INIT 下，仅识别长按 => 进入 ADVANCED_SELECT
+	          if (currentPress == PRESS_LONG)
+	          {
+	            g_systemState = STATE_ADVANCED_SELECT;
+	            sprintf(msg, "System -> ADVANCED_SELECT\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
 	          break;
 
-	        case STATE_RED_ACTIVE:
-	          // RED_ACTIVE -> IR_ACTIVE
-	          systemState = STATE_IR_ACTIVE;
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // 启动IR
-	          sprintf(msg, "System -> IR_ACTIVE\r\n");
-	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	        case STATE_ADVANCED_SELECT:
+	          if (currentPress == PRESS_SHORT)
+	          {
+	            // 短按 => 在 心率 / 血氧 之间切换
+	            g_measureType = (g_measureType == MEASURE_HR) ? MEASURE_SPO2 : MEASURE_HR;
+	            if (g_measureType == MEASURE_HR)
+	            {
+	              sprintf(msg, "Selected: Heart Rate\r\n");
+	            }
+	            else
+	            {
+	              sprintf(msg, "Selected: SpO2\r\n");
+	            }
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          else if (currentPress == PRESS_LONG)
+	          {
+	            // 长按 => 进入 WORKMODE_SELECT
+	            g_systemState = STATE_WORKMODE_SELECT;
+	            sprintf(msg, "System -> WORKMODE_SELECT\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
 	          break;
 
-	        case STATE_IR_ACTIVE:
-	          // IR_ACTIVE -> IDLE
-	          systemState = STATE_IDLE;
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
-	          sprintf(msg, "System -> IDLE\r\n");
-	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+	        case STATE_WORKMODE_SELECT:
+	          if (currentPress == PRESS_SHORT)
+	          {
+	            // 短按 => 在 RED / IR 模式之间切换
+	            g_workMode = (g_workMode == MODE_RED) ? MODE_IR : MODE_RED;
+	            if (g_workMode == MODE_RED)
+	            {
+	              sprintf(msg, "Work Mode: RED\r\n");
+	            }
+	            else
+	            {
+	              sprintf(msg, "Work Mode: IR\r\n");
+	            }
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          else if (currentPress == PRESS_LONG)
+	          {
+	            // 长按 => 进入 RUNNING
+	            g_systemState = STATE_RUNNING;
+	            sprintf(msg, "System -> RUNNING\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	          }
+	          break;
+
+	        case STATE_RUNNING:
+	          // 在 RUNNING 下，长按 => 回到 INIT
+	          if (currentPress == PRESS_LONG)
+	          {
+	            g_systemState = STATE_INIT;
+	            sprintf(msg, "System -> INIT\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+	            // 关闭所有LED
+	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+	          }
+	          // 短按在 RUNNING 状态下此处不做任何处理
+	          break;
+
+	        case STATE_ERROR:
+	          // 在 ERROR 下，长按 => 回到 INIT
+	          if (currentPress == PRESS_LONG)
+	          {
+	            g_systemState = STATE_INIT;
+	            sprintf(msg, "System -> INIT (from ERROR)\r\n");
+	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+	            // 关闭所有LED
+	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+	            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+	          }
 	          break;
 
 	        default:
-	          // 理论上不会进入这里，防御式处理
-	          systemState = STATE_IDLE;
+	          // 不期望进入的分支，进入 ERROR
+	          enterErrorState();
 	          break;
 	      }
 	    }
 
-	    /* ========== 【2】状态行为：根据当前状态执行相应任务 ========== */
-	    switch (systemState)
+	    // 2. 根据当前状态执行“状态行为”
+	    switch (g_systemState)
 	    {
-	      case STATE_IDLE:
-	        // 空闲态，不进行ADC读取
+	      case STATE_INIT:
+	        // INIT: 不做采集
 	        break;
 
-	      case STATE_RED_ACTIVE:
-	      case STATE_IR_ACTIVE:
-	        // 不论是红光还是IR激活，都进行一次ADC读取
+	      case STATE_ADVANCED_SELECT:
+	        // 可在此进行提示或小动画，此处不做任何采集
+	        break;
+
+	      case STATE_WORKMODE_SELECT:
+	        // 同上，仅选择工作模式，不做采集
+	        break;
+
+	      case STATE_RUNNING:
+	      {
+	        // 根据选择，打开对应LED
+	        if (g_workMode == MODE_RED)
+	        {
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 打开红光(低电平有效)
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);   // 关闭IR
+	        }
+	        else
+	        {
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 关闭红光
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // 打开IR
+	        }
+
+	        // 采集ADC
 	        HAL_ADC_Start(&hadc1);
 	        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
 	        {
 	          adcValue = HAL_ADC_GetValue(&hadc1);
-	          sprintf(msg, "ADC Data: %lu\r\n", adcValue);
-	          HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+
+	          // 根据测量类型，对 ADC 数据做不同的处理
+	          if (g_measureType == MEASURE_HR)
+	          {
+	            uint16_t hrValue = computeHeartRate(adcValue);
+	            sprintf(msg, "ADC: %lu -> HR: %u bpm\r\n", adcValue, hrValue);
+	          }
+	          else
+	          {
+	            uint8_t spo2Value = computeSpO2(adcValue);
+	            sprintf(msg, "ADC: %lu -> SpO2: %u%%\r\n", adcValue, spo2Value);
+	          }
+
+	          HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 	        }
+	        break;
+	      }
+
+	      case STATE_ERROR:
+	        // ERROR: 不断闪烁LED或等待用户长按恢复
+	        // 此处仅等待用户长按来回到INIT，不做其他操作
 	        break;
 
 	      default:
-	        // 防御式处理，默认不做任何事
+	        // 防御式处理：进入 ERROR
+	        enterErrorState();
 	        break;
 	    }
 
-	    HAL_Delay(10); // 微小延时，防止主循环过于频繁
+	    HAL_Delay(10); // 小延时，防止主循环过于频繁
   }
   /* USER CODE END 3 */
 }
@@ -401,25 +555,57 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-/**
-  * @brief  EXTI line detection callbacks.
-  * @param  GPIO_Pin Specifies the pins connected EXTI line.
-  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+  static uint32_t pressStartTime = 0;
   static uint32_t lastInterruptTime = 0;
-  uint32_t currentTime = HAL_GetTick();
 
   if (GPIO_Pin == GPIO_PIN_13)
   {
-    // 简单去抖动：若当前按下与上次中断间隔<200ms，则忽略
-    if ((currentTime - lastInterruptTime) < 200)
-      return;
-    lastInterruptTime = currentTime;
+    uint32_t now = HAL_GetTick();
 
-    // 标记按钮已按下，让主循环里进行状态切换
-    buttonPressed = 1;
+    // 基础去抖判断：若距离上次中断 < DEBOUNCE_INTERVAL，则直接忽略
+    if ((now - lastInterruptTime) < DEBOUNCE_INTERVAL)
+      return;
+    lastInterruptTime = now;
+
+    // 判断当前引脚电平
+    GPIO_PinState pinState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+
+    if (pinState == GPIO_PIN_RESET)
+    {
+      // 下降沿 => 按下
+      pressStartTime = now;
+    }
+    else
+    {
+      // 上升沿 => 松开
+      uint32_t pressDuration = now - pressStartTime;
+      if (pressDuration >= LONG_PRESS_THRESHOLD)
+      {
+        g_pressEvent = PRESS_LONG;
+      }
+      else
+      {
+        g_pressEvent = PRESS_SHORT;
+      }
+    }
   }
+}
+
+/**
+  * @brief 将系统切换到 ERROR 状态
+  */
+static void enterErrorState(void)
+{
+  g_systemState = STATE_ERROR;
+  char msg[50];
+  sprintf(msg, "System -> ERROR\r\n");
+  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+  // 关灯
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 }
 /* USER CODE END 4 */
 
