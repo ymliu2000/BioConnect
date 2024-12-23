@@ -81,8 +81,14 @@ typedef enum
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 // 将长按阈值改为 2 秒 (2000 ms)
+// 将长按阈值改为 2 秒 (2000 ms)
 #define LONG_PRESS_THRESHOLD   2000
 #define DEBOUNCE_INTERVAL      50    // 去抖间隔 (ms)
+
+/* 下面定义板载LED引脚 (PA5) 以及不同状态下闪烁周期 */
+#define LED_PIN                GPIO_PIN_5
+#define LED_PORT               GPIOA
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -110,30 +116,21 @@ PreProcessType_t g_preprocType = PREPROC_SF;      // 预处理：默认 Squaring
 /* =============== 示例算法区域 =============== */
 
 /**
-  * @brief  用于演示的“Squaring Filter”预处理
-  * @param  input 原始ADC采样值
-  * @retval 处理后的值
+  * @brief 用于演示的“Squaring Filter”预处理
   */
 static uint32_t applySquaringFilter(uint32_t input)
 {
-    // 演示：简单地做一次 (input^2) 并防止溢出
-    // 实际项目可能需要在浮点数或更大范围处理
     uint64_t squared = (uint64_t)input * (uint64_t)input;
-    // 做一个简单的截断，防止出现过大数
     if (squared > 0xFFFFFFFF)
         squared = 0xFFFFFFFF;
     return (uint32_t)squared;
 }
 
 /**
-  * @brief  用于演示的“Exponential Moving Average”预处理
-  * @param  input 当前ADC采样值
-  * @retval EMA后的值
+  * @brief 用于演示的“Exponential Moving Average”预处理
   */
 static uint32_t applyExponentialMovingAverage(uint32_t input)
 {
-    // 这里的 alpha = 0.1 仅作演示
-    // 通常会保留上次的 EMA 值
     static float emaVal = 0.0f;
     float alpha = 0.1f;
 
@@ -142,24 +139,20 @@ static uint32_t applyExponentialMovingAverage(uint32_t input)
 }
 
 /**
-  * @brief  用于演示的“心率”计算
-  * @param  value 预处理后的采样值
-  * @retval 心率值 (bpm)
+  * @brief 用于演示的“心率”计算
   */
 static uint16_t computeHeartRate(uint32_t value)
 {
-    // 简单映射：HR = 60 + (value mod 40)
+    // 简单映射：HR = 60 + (value % 40)
     return 60 + (value % 40);
 }
 
 /**
-  * @brief  用于演示的“血氧”计算
-  * @param  value 预处理后的采样值
-  * @retval 血氧饱和度 (%)
+  * @brief 用于演示的“血氧”计算
   */
 static uint8_t computeSpO2(uint32_t value)
 {
-    // 简单映射：SpO2 = 95 + (value mod 5)
+    // 简单映射：SpO2 = 95 + (value % 5)
     return 95 + (value % 5);
 }
 /* USER CODE END PV */
@@ -172,6 +165,11 @@ static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void enterErrorState(void);
+
+/**
+  * @brief 根据当前状态更新板载LED闪烁/常亮/熄灭
+  */
+static void updateLED(SystemState_t state);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -231,10 +229,9 @@ int main(void)
 	    PressType_t currentPress = g_pressEvent;
 	    if (currentPress != PRESS_NONE)
 	    {
-	      // 读取到后，马上清除，避免重复触发
-	      g_pressEvent = PRESS_NONE;
+	      g_pressEvent = PRESS_NONE; // 清除事件，避免重复触发
 
-	      // 根据当前系统状态和按键类型，做状态转移或动作
+	      // 根据当前系统状态 & 按键类型，做状态转移或动作
 	      switch (g_systemState)
 	      {
 	        case STATE_INIT:
@@ -347,24 +344,24 @@ int main(void)
 	    switch (g_systemState)
 	    {
 	      case STATE_INIT:
-	        // INIT: 不做采集
+	        // INIT: 不做ADC采集
 	        break;
 
 	      case STATE_WORKMODE_SELECT:
-	        // 不做采集，等待用户选择RED/IR
+	        // 不做ADC采集，等待用户选择RED/IR
 	        break;
 
 	      case STATE_PREPROCESS_SELECT:
-	        // 不做采集，等待用户选择SF/EMA
+	        // 不做ADC采集，等待用户选择SF/EMA
 	        break;
 
 	      case STATE_ADVANCED_SELECT:
-	        // 不做采集，等待用户选择HR/SpO2
+	        // 不做ADC采集，等待用户选择HR/SpO2
 	        break;
 
 	      case STATE_RUNNING:
 	      {
-	        // 先根据工作模式开关对应LED
+	        // 根据工作模式开/关对应LED
 	        if (g_workMode == MODE_RED)
 	        {
 	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 打开红光(低电平有效)
@@ -397,13 +394,13 @@ int main(void)
 	          if (g_measureType == MEASURE_HR)
 	          {
 	            uint16_t hrValue = computeHeartRate(preprocessedValue);
-	            sprintf(msg, "ADC:%lu ->Pre:%lu ->HR:%u bpm\r\n",
+	            sprintf(msg, "\rADC:%lu ->Pre:%lu ->HR:%u bpm      ",
 	                    adcValue, preprocessedValue, hrValue);
 	          }
 	          else
 	          {
 	            uint8_t spo2Value = computeSpO2(preprocessedValue);
-	            sprintf(msg, "ADC:%lu ->Pre:%lu ->SpO2:%u%%\r\n",
+	            sprintf(msg, "\rADC:%lu ->Pre:%lu ->SpO2:%u%%      ",
 	                    adcValue, preprocessedValue, spo2Value);
 	          }
 	          HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
@@ -412,7 +409,7 @@ int main(void)
 	      }
 
 	      case STATE_ERROR:
-	        // 可让LED闪烁，或等待用户长按恢复
+	        // 在 ERROR 状态下，你可让 LED 快速闪烁，或等待用户长按恢复
 	        break;
 
 	      default:
@@ -420,6 +417,9 @@ int main(void)
 	        enterErrorState();
 	        break;
 	    }
+
+	    // 3. 每次循环调用LED更新函数，让板载LED指示当前状态
+	    updateLED(g_systemState);
 
 	    HAL_Delay(10); // 小延时，防止主循环过于频繁
   }
@@ -640,9 +640,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 /**
-  * @brief EXTI 回调函数：用于识别短按 / 长按
-  *        - 下降沿: 按下
-  *        - 上升沿: 松开 => 根据按下时长判断是短按 or 长按
+  * @brief EXTI 回调函数：识别短按/长按
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -653,12 +651,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   {
     uint32_t now = HAL_GetTick();
 
-    // 基础去抖判断：若距离上次中断 < DEBOUNCE_INTERVAL，则直接忽略
+    // 简单去抖
     if ((now - lastInterruptTime) < DEBOUNCE_INTERVAL)
       return;
     lastInterruptTime = now;
 
-    // 读取当前引脚电平
     GPIO_PinState pinState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
     if (pinState == GPIO_PIN_RESET)
@@ -678,6 +675,69 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       {
         g_pressEvent = PRESS_SHORT;
       }
+    }
+  }
+}
+
+/**
+  * @brief 根据当前状态让板载LED闪烁或常亮/熄灭
+  */
+static void updateLED(SystemState_t state)
+{
+  // 假设高电平=灭，低电平=亮
+  static uint32_t lastToggleTime = 0;
+  static GPIO_PinState ledState  = GPIO_PIN_RESET; // 初始默认熄灭/亮，可以微调
+
+  uint32_t now = HAL_GetTick();
+  uint32_t blinkInterval = 0; // 0=熄灭, 0xFFFFFFFF=常亮, 其他=闪烁周期
+
+  switch (state)
+  {
+    case STATE_INIT:
+      // 灭灯
+      blinkInterval = 0;
+      break;
+    case STATE_WORKMODE_SELECT:
+      blinkInterval = 500; // 慢闪
+      break;
+    case STATE_PREPROCESS_SELECT:
+      blinkInterval = 300; // 中闪
+      break;
+    case STATE_ADVANCED_SELECT:
+      blinkInterval = 200; // 快闪
+      break;
+    case STATE_RUNNING:
+      blinkInterval = 0xFFFFFFFF; // 常亮
+      break;
+    case STATE_ERROR:
+      blinkInterval = 100; // 超快闪
+      break;
+    default:
+      blinkInterval = 0;
+      break;
+  }
+
+  if (blinkInterval == 0)
+  {
+    // 始终灭
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+    ledState = GPIO_PIN_SET;
+  }
+  else if (blinkInterval == 0xFFFFFFFF)
+  {
+    // 常亮
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+    ledState = GPIO_PIN_RESET;
+  }
+  else
+  {
+    // 闪烁
+    if ((now - lastToggleTime) >= blinkInterval)
+    {
+      lastToggleTime = now;
+      // 翻转电平
+      ledState = (ledState == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+      HAL_GPIO_WritePin(LED_PORT, LED_PIN, ledState);
     }
   }
 }

@@ -1,10 +1,10 @@
-02:43:09 **** Incremental Build of configuration Debug for project PPG ****
+03:00:37 **** Incremental Build of configuration Debug for project PPG ****
 make -j7 all 
 arm-none-eabi-size  PPG.elf 
    text	   data	    bss	    dec	    hex	filename
-  24364	     92	   2372	  26828	   68cc	PPG.elf
+  24624	     92	   2380	  27096	   69d8	PPG.elf
 Finished building: default.size.stdout
  
 
-02:43:10 Build Finished. 0 errors, 0 warnings. (took 334ms)
+03:00:37 Build Finished. 0 errors, 0 warnings. (took 261ms)
 
